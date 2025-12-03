@@ -39,5 +39,17 @@ pipeline {
             echo '🎉 Pipeline terminé avec succès'
         }
     }
+        stage('Package JAR') {
+            steps {
+                echo '📦 Packaging en JAR...'
+                sh 'mvn clean package -DskipTests'
+            }
+        }
+
+        stage('Archive Artifact') {
+            steps {
+                echo '📁 Archivage du fichier JAR...'
+                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+            }
 }
 
