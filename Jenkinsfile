@@ -7,6 +7,7 @@ pipeline {
     }
 
     stages {
+
         stage('1️⃣ Clone Repository') {
             steps {
                 echo '📥 Clonage du repository Git...'
@@ -29,6 +30,21 @@ pipeline {
                 sh 'mvn package -DskipTests'
             }
         }
+
+        stage('4️⃣ Package JAR') {
+            steps {
+                echo '📦 Packaging en JAR...'
+                sh 'mvn clean package -DskipTests'
+            }
+        }
+
+        stage('5️⃣ Archive Artifact') {
+            steps {
+                echo '📁 Archivage du fichier JAR...'
+                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+            }
+        }
+
     }
 
     post {
@@ -39,17 +55,5 @@ pipeline {
             echo '🎉 Pipeline terminé avec succès'
         }
     }
-        stage('Package JAR') {
-            steps {
-                echo '📦 Packaging en JAR...'
-                sh 'mvn clean package -DskipTests'
-            }
-        }
-
-        stage('Archive Artifact') {
-            steps {
-                echo '📁 Archivage du fichier JAR...'
-                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
-            }
 }
 
