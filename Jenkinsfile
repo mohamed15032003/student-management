@@ -1,6 +1,11 @@
 pipeline {
     agent any
-    
+
+    tools {
+        maven 'MAVEN_3'
+        jdk 'JDK21'
+    }
+
     stages {
         stage('1️⃣ Clone Repository') {
             steps {
@@ -9,32 +14,29 @@ pipeline {
                 echo '✅ Clonage terminé'
             }
         }
-        
+
         stage('2️⃣ Build Project') {
             steps {
                 echo '🔨 Compilation du projet avec Maven...'
-                bat 'mvn clean compile'
-                echo '✅ Compilation réussie'
+                sh 'mvn clean compile -DskipTests'
+                echo '✅ Build terminé'
             }
         }
-        
-        stage('3️⃣ Test & Package (Tests Sautés)') { // 👈 Nom de l'étape mis à jour
+
+        stage('3️⃣ Test & Package (Tests Sautés)') {
             steps {
-                echo '🧪 Packaging sans exécuter les tests...'
-                // 💡 L'argument -DskipTests permet d'ignorer les erreurs de connexion à la BD.
-                bat 'mvn clean package -DskipTests' 
-                echo '✅ Packaging terminé'
+                echo '📦 Packaging du projet...'
+                sh 'mvn package -DskipTests'
             }
         }
     }
-    
+
     post {
-        success {
-            echo '🎉 Pipeline exécuté avec succès !'
-            archiveArtifacts artifacts: 'target/*.jar', allowEmptyArchive: true
-        }
         failure {
             echo '❌ Le pipeline a échoué'
+        }
+        success {
+            echo '🎉 Pipeline terminé avec succès'
         }
     }
 }
