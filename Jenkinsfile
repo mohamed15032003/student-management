@@ -11,7 +11,7 @@ pipeline {
         stage('1️⃣ Clone') {
             steps {
                 echo '📥 Cloning repository...'
-                git branch: 'main', url: 'https://github.com/mohamedderbel317/student-management.git'
+                git branch: 'main', url: 'https://github.com/mohamed15032003/student-management.git'
                 echo '✅ Clone done'
             }
         }
