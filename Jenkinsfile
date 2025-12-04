@@ -8,52 +8,48 @@ pipeline {
 
     stages {
 
-        stage('1️⃣ Clone Repository') {
+        stage('1️⃣ Clone') {
             steps {
-                echo '📥 Clonage du repository Git...'
-                git branch: 'main', url: 'https://github.com/mohamed15032003/student-management.git'
-                echo '✅ Clonage terminé'
+                echo '📥 Cloning repository...'
+                git branch: 'main', url: 'https://github.com/mohamedderbel317/student-management.git'
+                echo '✅ Clone done'
             }
         }
 
-        stage('2️⃣ Build Project') {
+        stage('2️⃣ Build') {
             steps {
-                echo '🔨 Compilation du projet avec Maven...'
+                echo '🔨 Building the project...'
                 sh 'mvn clean compile -DskipTests'
-                echo '✅ Build terminé'
+                echo '✅ Build completed'
             }
         }
 
-        stage('3️⃣ Test & Package (Tests Sautés)') {
+        stage('3️⃣ Test') {
             steps {
-                echo '📦 Packaging du projet...'
+                echo '🧪 Running tests...'
+                sh 'mvn test'
+                echo '📊 Tests completed'
+            }
+        }
+
+        stage('4️⃣ JAR Packaging') {
+            steps {
+                echo '📦 Creating JAR file...'
                 sh 'mvn package -DskipTests'
-            }
-        }
-
-        stage('4️⃣ Package JAR') {
-            steps {
-                echo '📦 Packaging en JAR...'
-                sh 'mvn clean package -DskipTests'
-            }
-        }
-
-        stage('5️⃣ Archive Artifact') {
-            steps {
-                echo '📁 Archivage du fichier JAR...'
-                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+                echo '🎉 JAR generated in target/'
             }
         }
 
     }
 
     post {
-        failure {
-            echo '❌ Le pipeline a échoué'
-        }
         success {
-            echo '🎉 Pipeline terminé avec succès'
+            echo '🎉 Pipeline executed successfully!'
+        }
+        failure {
+            echo '❌ Pipeline failed!'
         }
     }
 }
+
 
