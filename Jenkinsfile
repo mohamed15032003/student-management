@@ -6,8 +6,11 @@ pipeline {
         jdk 'JDK17'
     }
 
-    stages {
+    environment {
+        SONARQUBE_TOKEN = credentials('SONARQUBE_TOKEN')
+    }
 
+    stages {
         stage('1️⃣ Clone Repository') {
             steps {
                 echo '📥 Clonage du repository Git...'
@@ -19,32 +22,49 @@ pipeline {
         stage('2️⃣ Build Project') {
             steps {
                 echo '🔨 Compilation du projet avec Maven...'
-                sh 'mvn clean compile -DskipTests'
+                sh 'mvn clean compile'
                 echo '✅ Build terminé'
             }
         }
 
-        stage('3️⃣ Test & Package (Tests Sautés)') {
+        stage('3️⃣ Run Tests') {
             steps {
-                echo '📦 Packaging du projet...'
-                sh 'mvn package -DskipTests'
+                echo '🧪 Exécution des tests...'
+                sh 'mvn test'
+                echo '✅ Tests terminés'
             }
         }
 
         stage('4️⃣ Package JAR') {
             steps {
-                echo '📦 Packaging en JAR...'
-                sh 'mvn clean package -DskipTests'
+                echo '📦 Packaging du projet en JAR...'
+                sh 'mvn package'
+                echo '✅ Package JAR terminé'
             }
         }
 
-        stage('5️⃣ Archive Artifact') {
+        stage('5️⃣ SonarQube Analysis') {
+            steps {
+                echo '🔍 Analyse de qualité du code avec SonarQube...'
+                withSonarQubeEnv('sonarqube') {
+                    sh """
+                    mvn sonar:sonar \
+                        -Dsonar.projectKey=student-management \
+                        -Dsonar.host.url=http://localhost:9000 \
+                        -Dsonar.login=${SONARQUBE_TOKEN}
+                    """
+                }
+                echo '✅ Analyse SonarQube terminée'
+            }
+        }
+
+        stage('6️⃣ Archive Artifact') {
             steps {
                 echo '📁 Archivage du fichier JAR...'
                 archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+                echo '✅ Archivage terminé'
             }
         }
-
     }
 
     post {
@@ -56,5 +76,4 @@ pipeline {
         }
     }
 }
-
 
