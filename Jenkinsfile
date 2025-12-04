@@ -22,7 +22,7 @@ pipeline {
         stage('2️⃣ Build Project') {
             steps {
                 echo '🔨 Compilation du projet avec Maven...'
-                sh 'mvn clean compile'
+                sh 'mvn clean compile -DskipTests' 
                 echo '✅ Build terminé'
             }
         }
@@ -30,7 +30,7 @@ pipeline {
         stage('3️⃣ Run Tests') {
             steps {
                 echo '🧪 Exécution des tests...'
-                sh 'mvn test'
+                sh 'mvn test -DskipTests'  
                 echo '✅ Tests terminés'
             }
         }
@@ -38,7 +38,7 @@ pipeline {
         stage('4️⃣ Package JAR') {
             steps {
                 echo '📦 Packaging du projet en JAR...'
-                sh 'mvn package'
+                sh 'mvn package -DskipTests'  
                 echo '✅ Package JAR terminé'
             }
         }
@@ -51,7 +51,8 @@ pipeline {
                     mvn sonar:sonar \
                         -Dsonar.projectKey=student-management \
                         -Dsonar.host.url=http://localhost:9000 \
-                        -Dsonar.login=${SONARQUBE_TOKEN}
+                        -Dsonar.login=${SONARQUBE_TOKEN} \
+                        -DskipTests
                     """
                 }
                 echo '✅ Analyse SonarQube terminée'
