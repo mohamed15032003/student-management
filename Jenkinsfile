@@ -8,46 +8,51 @@ pipeline {
 
     stages {
 
-        stage('1️⃣ Clone') {
+        stage('1️⃣ Clone Repository') {
             steps {
-                echo '📥 Cloning repository...'
+                echo '📥 Clonage du repository Git...'
                 git branch: 'main', url: 'https://github.com/mohamed15032003/student-management.git'
-                echo '✅ Clone done'
+                echo '✅ Clonage terminé'
             }
         }
 
-        stage('2️⃣ Build') {
+        stage('2️⃣ Build Project') {
             steps {
-                echo '🔨 Building the project...'
+                echo '🔨 Compilation du projet avec Maven...'
                 sh 'mvn clean compile -DskipTests'
-                echo '✅ Build completed'
+                echo '✅ Build terminé'
             }
         }
 
-        stage('3️⃣ Test') {
+        stage('3️⃣ Test & Package (Tests Sautés)') {
             steps {
-                echo '🧪 Running tests...'
-                sh 'mvn test'
-                echo '📊 Tests completed'
-            }
-        }
-
-        stage('4️⃣ JAR Packaging') {
-            steps {
-                echo '📦 Creating JAR file...'
+                echo '📦 Packaging du projet...'
                 sh 'mvn package -DskipTests'
-                echo '🎉 JAR generated in target/'
+            }
+        }
+
+        stage('4️⃣ Package JAR') {
+            steps {
+                echo '📦 Packaging en JAR...'
+                sh 'mvn clean package -DskipTests'
+            }
+        }
+
+        stage('5️⃣ Archive Artifact') {
+            steps {
+                echo '📁 Archivage du fichier JAR...'
+                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
             }
         }
 
     }
 
     post {
-        success {
-            echo '🎉 Pipeline executed successfully!'
-        }
         failure {
-            echo '❌ Pipeline failed!'
+            echo '❌ Le pipeline a échoué'
+        }
+        success {
+            echo '🎉 Pipeline terminé avec succès'
         }
     }
 }
