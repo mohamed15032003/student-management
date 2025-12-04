@@ -1,12 +1,12 @@
 pipeline {
-    agent any  // Tourne sur n'importe quelle machine Jenkins
+    agent any
     
     tools {
-        jdk 'jdk11'  // Utilise Java 11 (configure dans Jenkins)
+        jdk 'JDK17'  // ← CORRECTION ICI
     }
     
     stages {
-        // ÉTAPE 1 : CLONE - Prendre le code depuis GitHub
+        // ÉTAPE 1 : CLONE
         stage('📥 Clone du Code') {
             steps {
                 echo '1. Je prends le code depuis GitHub...'
@@ -16,7 +16,7 @@ pipeline {
             }
         }
         
-        // ÉTAPE 2 : COMPILATION - Vérifier que le code compile
+        // ÉTAPE 2 : COMPILATION
         stage('🔨 Compilation') {
             steps {
                 echo '2. Je vérifie que le code compile...'
@@ -25,7 +25,7 @@ pipeline {
             }
         }
         
-        // ÉTAPE 3 : TESTS - Exécuter les tests (SANS -DskipTests)
+        // ÉTAPE 3 : TESTS
         stage('🧪 Tests Automatiques') {
             steps {
                 echo '3. Je lance les tests automatiques...'
@@ -34,7 +34,7 @@ pipeline {
             }
         }
         
-        // ÉTAPE 4 : SONARQUBE - Analyse de qualité
+        // ÉTAPE 4 : SONARQUBE
         stage('🔍 Analyse SonarQube') {
             steps {
                 echo '4. Je vérifie la qualité du code avec SonarQube...'
@@ -49,16 +49,16 @@ pipeline {
             }
         }
         
-        // ÉTAPE 5 : PACKAGE - Créer le fichier JAR
+        // ÉTAPE 5 : PACKAGE
         stage('📦 Création du JAR') {
             steps {
                 echo '5. Je crée le fichier JAR executable...'
-                sh 'mvn package -DskipTests'  // Tests déjà faits, on peut sauter
+                sh 'mvn package -DskipTests'
                 echo '✅ JAR créé avec succès !'
             }
         }
         
-        // ÉTAPE 6 : SAUVEGARDE - Garder une copie du JAR
+        // ÉTAPE 6 : SAUVEGARDE
         stage('💾 Sauvegarde') {
             steps {
                 echo '6. Je sauvegarde le fichier JAR...'
@@ -68,7 +68,6 @@ pipeline {
         }
     }
     
-    // CE QUI SE PASSE APRÈS LE PIPELINE
     post {
         always {
             echo '📊 Résumé du pipeline terminé !'
