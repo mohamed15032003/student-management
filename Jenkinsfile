@@ -7,7 +7,7 @@ pipeline {
     }
 
     environment {
-        SONAR_TOKEN = credentials('SONARQUBE_TOKEN')  // ✅ استعمال credential
+        SONAR_TOKEN = credentials('SONARQUBE_TOKEN')  
     }
 
     stages {
