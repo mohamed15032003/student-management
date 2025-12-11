@@ -11,7 +11,7 @@ pipeline {
         DOCKERHUB_CREDS = credentials('docker-hub-credentials')
         APP_PORT = '9090'
         BUILD_VERSION = "${BUILD_NUMBER}"
-        DOCKER_REPO = 'Mohamed Derbel/student-management'
+        DOCKER_REPO = 'mohamed15032003/student-management'  // Corrigé le nom d'utilisateur
     }
 
     stages {
@@ -55,15 +55,6 @@ pipeline {
             steps {
                 echo "Étape 5/8 : Construction image Docker"
                 script {
-                    // Création Dockerfile
-                    sh '''
-                        cat > Dockerfile << 'EOF'
-FROM openjdk:17-alpine
-COPY target/*.jar app.jar
-ENTRYPOINT ["java", "-jar", "/app.jar"]
-EOF
-                    '''
-                    
                     // Build des images Docker
                     sh "docker build -t ${DOCKER_REPO}:${BUILD_VERSION} ."
                     sh "docker build -t ${DOCKER_REPO}:latest ."
@@ -105,8 +96,8 @@ EOF
                     // Login Docker Hub
                     withCredentials([usernamePassword(
                         credentialsId: 'docker-hub-credentials',
-                        usernameVariable: 'Mohamed Derbel',
-                        passwordVariable: 'user123@Med'
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
                     )]) {
                         sh """
                             echo "${DOCKER_PASS}" | docker login \
@@ -120,8 +111,10 @@ EOF
                         docker push ${DOCKER_REPO}:latest
                     """
                     
-                    // Déploiement local
+                    // Arrêt et suppression du conteneur existant
                     sh 'docker rm -f student-app || true'
+                    
+                    // Déploiement local
                     sh """
                         docker run -d \
                             --name student-app \
@@ -145,7 +138,7 @@ EOF
     post {
         always {
             echo "=== PIPELINE TERMINÉE ==="
-            echo "Statut: ${currentBuild.result ?: 'SUCCESS'}"
+            echo "Statut: ${currentBuild.currentResult}"
             echo "Build: #${BUILD_NUMBER}"
             echo "Application: http://192.168.136.129:${APP_PORT}"
             echo "Docker Hub: https://hub.docker.com/r/${DOCKER_REPO.split('/')[0]}/student-management"
