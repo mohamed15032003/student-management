@@ -84,6 +84,25 @@ pipeline {
                 }
             }
         }
+        // Si vous avez supprimé le stage 8, assurez-vous qu'il n'y a pas de virgule après le stage 7
+    }
 
-       
+    post {
+        always {
+            echo "=== PIPELINE TERMINÉE ==="
+            echo "Statut: ${currentBuild.currentResult}"
+            echo "Build: #${BUILD_NUMBER}"
+            echo "Application: http://192.168.136.129:${APP_PORT}"
+            script {
+                def repoParts = "${DOCKER_REPO}".split('/')
+                echo "Docker Hub: https://hub.docker.com/r/${repoParts[0]}/student-management"
+            }
+        }
+        success {
+            echo "✅ DÉPLOIEMENT RÉUSSI"
+        }
+        failure {
+            echo "❌ DÉPLOIEMENT ÉCHOUÉ"
+        }
+    }
 }
