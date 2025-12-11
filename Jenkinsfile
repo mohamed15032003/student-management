@@ -11,7 +11,9 @@ pipeline {
         DOCKERHUB_CREDS = credentials('docker-hub-credentials')
         APP_PORT = '9090'
         BUILD_VERSION = "${BUILD_NUMBER}"
-        DOCKER_REPO = 'mohamed15032003/student-management'  // Corrigé le nom d'utilisateur
+        DOCKER_REPO = 'mohamed15032003/student-management'
+        DOCKER_USER = credentials('docker-hub-credentials').username
+        DOCKER_PASS = credentials('docker-hub-credentials').password
     }
 
     stages {
@@ -19,8 +21,7 @@ pipeline {
         stage('1) Clone du Code') {
             steps {
                 echo "Étape 1/8 : Récupération du code source"
-                git branch: 'main', 
-                    url: 'https://github.com/mohamed15032003/student-management.git'
+                checkout scm
             }
         }
 
@@ -55,7 +56,6 @@ pipeline {
             steps {
                 echo "Étape 5/8 : Construction image Docker"
                 script {
-                    // Build des images Docker
                     sh "docker build -t ${DOCKER_REPO}:${BUILD_VERSION} ."
                     sh "docker build -t ${DOCKER_REPO}:latest ."
                 }
@@ -94,16 +94,10 @@ pipeline {
                     echo "Étape 8/8 : Déploiement Docker"
                     
                     // Login Docker Hub
-                    withCredentials([usernamePassword(
-                        credentialsId: 'docker-hub-credentials',
-                        usernameVariable: 'DOCKER_USER',
-                        passwordVariable: 'DOCKER_PASS'
-                    )]) {
-                        sh """
-                            echo "${DOCKER_PASS}" | docker login \
-                                -u "${DOCKER_USER}" --password-stdin
-                        """
-                    }
+                    sh """
+                        echo "${DOCKER_PASS}" | docker login \
+                            -u "${DOCKER_USER}" --password-stdin
+                    """
                     
                     // Push vers Docker Hub
                     sh """
@@ -111,10 +105,8 @@ pipeline {
                         docker push ${DOCKER_REPO}:latest
                     """
                     
-                    // Arrêt et suppression du conteneur existant
-                    sh 'docker rm -f student-app || true'
-                    
                     // Déploiement local
+                    sh 'docker rm -f student-app || true'
                     sh """
                         docker run -d \
                             --name student-app \
@@ -140,8 +132,8 @@ pipeline {
             echo "=== PIPELINE TERMINÉE ==="
             echo "Statut: ${currentBuild.currentResult}"
             echo "Build: #${BUILD_NUMBER}"
-            echo "Application: http://192.168.136.129:${APP_PORT}"
-            echo "Docker Hub: https://hub.docker.com/r/${DOCKER_REPO.split('/')[0]}/student-management"
+            echo "Application: http://192.168.136.129:${env.APP_PORT}"
+            echo "Docker Hub: https://hub.docker.com/r/${env.DOCKER_REPO.split('/')[0]}/student-management"
         }
         success {
             echo "✅ DÉPLOIEMENT RÉUSSI"
