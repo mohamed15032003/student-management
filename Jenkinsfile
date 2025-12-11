@@ -12,8 +12,6 @@ pipeline {
         APP_PORT = '9090'
         BUILD_VERSION = "${BUILD_NUMBER}"
         DOCKER_REPO = 'mohamed15032003/student-management'
-        DOCKER_USER = credentials('docker-hub-credentials').username
-        DOCKER_PASS = credentials('docker-hub-credentials').password
     }
 
     stages {
@@ -93,17 +91,23 @@ pipeline {
                 script {
                     echo "Étape 8/8 : Déploiement Docker"
                     
-                    // Login Docker Hub
-                    sh """
-                        echo "${DOCKER_PASS}" | docker login \
-                            -u "${DOCKER_USER}" --password-stdin
-                    """
-                    
-                    // Push vers Docker Hub
-                    sh """
-                        docker push ${DOCKER_REPO}:${BUILD_VERSION}
-                        docker push ${DOCKER_REPO}:latest
-                    """
+                    // Login Docker Hub avec credentials
+                    withCredentials([usernamePassword(
+                        credentialsId: 'docker-hub-credentials',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )]) {
+                        sh """
+                            echo "${DOCKER_PASS}" | docker login \
+                                -u "${DOCKER_USER}" --password-stdin
+                        """
+                        
+                        // Push vers Docker Hub
+                        sh """
+                            docker push ${DOCKER_REPO}:${BUILD_VERSION}
+                            docker push ${DOCKER_REPO}:latest
+                        """
+                    }
                     
                     // Déploiement local
                     sh 'docker rm -f student-app || true'
@@ -132,8 +136,12 @@ pipeline {
             echo "=== PIPELINE TERMINÉE ==="
             echo "Statut: ${currentBuild.currentResult}"
             echo "Build: #${BUILD_NUMBER}"
-            echo "Application: http://192.168.136.129:${env.APP_PORT}"
-            echo "Docker Hub: https://hub.docker.com/r/${env.DOCKER_REPO.split('/')[0]}/student-management"
+            echo "Application: http://192.168.136.129:${APP_PORT}"
+            // Utilisation de env. pour éviter les problèmes de scope
+            script {
+                def repoParts = "${DOCKER_REPO}".split('/')
+                echo "Docker Hub: https://hub.docker.com/r/${repoParts[0]}/student-management"
+            }
         }
         success {
             echo "✅ DÉPLOIEMENT RÉUSSI"
