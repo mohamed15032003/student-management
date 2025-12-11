@@ -1,4 +1,4 @@
-ppipeline {
+pipeline {
     agent any
     
     tools {
@@ -8,152 +8,153 @@ ppipeline {
 
     environment {
         SONAR_TOKEN = credentials('jenkins_sonar')
+        DOCKERHUB_CREDS = credentials('docker-hub-credentials')
+        APP_PORT = '9090'
+        BUILD_VERSION = "${BUILD_NUMBER}"
+        DOCKER_REPO = 'Mohamed Derbel/student-management'
     }
 
     stages {
-        /* ------------------------------------------------------------------ */
-        stage('📥 1) Git Clone') {
+        // 1. CLONE
+        stage('1) Clone du Code') {
             steps {
-                echo "📥 Récupération du code source..."
-                git branch: 'MohamedYoussefMellouli', 
-                    url: 'https://github.com/MohamedYoussefMellouli/Devops.git'
-                echo "✅ Code source récupéré"
+                echo "Étape 1/8 : Récupération du code source"
+                git branch: 'main', 
+                    url: 'https://github.com/mohamed15032003/student-management.git'
             }
         }
 
-        /* ------------------------------------------------------------------ */
-        stage('🏗️ 2) Build Maven') {
+        // 2. BUILD
+        stage('2) Build Maven') {
             steps {
-                echo "🏗️ Compilation du projet..."
-                sh 'mvn clean compile -DskipTests'
-                echo "✅ Compilation réussie"
+                echo "Étape 2/8 : Compilation du projet"
+                sh 'mvn clean compile'
             }
         }
 
-        /* ------------------------------------------------------------------ */
-        stage('🧪 3) Tests avec Base de Données (Docker MySQL)') {
+        // 3. TESTS
+        stage('3) Tests Unitaires') {
             steps {
+                echo "Étape 3/8 : Exécution des tests"
+                sh 'mvn test'
+                junit 'target/surefire-reports/*.xml'
+            }
+        }
+
+        // 4. PACKAGE JAR
+        stage('4) Package JAR') {
+            steps {
+                echo "Étape 4/8 : Génération du JAR"
+                sh 'mvn package -DskipTests'
+                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+            }
+        }
+
+        // 5. DOCKER BUILD
+        stage('5) Docker Build') {
+            steps {
+                echo "Étape 5/8 : Construction image Docker"
                 script {
-                    echo "🐬 Lancement de MySQL dans Docker..."
-
-                    def mysqlID = sh(script: """
-                        docker run -d \
-                            --name mysql-test \
-                            -e MYSQL_ROOT_PASSWORD=root \
-                            -e MYSQL_DATABASE=student_db \
-                            -P \
-                            mysql:8.0
-                    """, returnStdout: true).trim()
-
-                    echo "🐋 MySQL ID : ${mysqlID}"
-
-                    def port = sh(script: "docker port mysql-test 3306 | cut -d':' -f2", returnStdout: true).trim()
-                    echo "🔌 MySQL disponible sur le port : ${port}"
-
-                    echo "⏳ Attente de MySQL..."
-                    sh "sleep 25"
-
-                    sh """
-                        mvn test \
-                        -Dspring.datasource.url=jdbc:mysql://localhost:${port}/student_db \
-                        -Dspring.datasource.username=root \
-                        -Dspring.datasource.password=root
-                    """
-
-                    echo "🧹 Nettoyage du conteneur..."
-                    sh "docker stop mysql-test"
-                    sh "docker rm mysql-test"
+                    // Création Dockerfile
+                    sh '''
+                        cat > Dockerfile << 'EOF'
+FROM openjdk:17-alpine
+COPY target/*.jar app.jar
+ENTRYPOINT ["java", "-jar", "/app.jar"]
+EOF
+                    '''
+                    
+                    // Build des images Docker
+                    sh "docker build -t ${DOCKER_REPO}:${BUILD_VERSION} ."
+                    sh "docker build -t ${DOCKER_REPO}:latest ."
                 }
             }
         }
 
-        /* ------------------------------------------------------------------ */
-        stage('📦 4) Build JAR + Archivage') {
+        // 6. SONARQUBE ANALYSIS
+        stage('6) Analyse SonarQube') {
             steps {
-                echo "📦 Génération du JAR..."
-                sh 'mvn package -DskipTests'
-
-                sh '''
-                    echo "=== ARTEFACTS ==="
-                    ls -la target/*.jar
-                    du -h target/*.jar
-                '''
-
-                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
-                echo "✅ JAR archivé"
-            }
-        }
-
-        /* ------------------------------------------------------------------ */
-        stage('🔍 5) Analyse SonarQube') {
-            steps {
-                echo "🔍 Analyse SonarQube..."
-
+                echo "Étape 6/8 : Analyse qualité du code"
                 withSonarQubeEnv('sonarqube') {
                     sh """
                         mvn sonar:sonar \
-                            -Dsonar.projectKey=Devops \
-                            -Dsonar.host.url=http://192.168.132.129:9000 \
-                            -Dsonar.login=${SONAR_TOKEN}
+                          -Dsonar.projectKey=student-management \
+                          -Dsonar.host.url=http://192.168.136.129:9000 \
+                          -Dsonar.login=${SONAR_TOKEN}
                     """
                 }
-
-                echo "✅ Analyse SonarQube terminée"
             }
         }
 
-        /* ------------------------------------------------------------------ */
-        stage('🚦 6) Quality Gate') {
+        // 7. QUALITY GATE
+        stage('7) Quality Gate') {
             steps {
-                echo "🚦 Attente du résultat Quality Gate..."
-                timeout(time: 10, unit: 'MINUTES') {
+                echo "Étape 7/8 : Vérification qualité"
+                timeout(time: 5, unit: 'MINUTES') {
                     waitForQualityGate abortPipeline: true
                 }
-                echo "✅ Quality Gate passée avec succès"
             }
         }
 
-        /* ------------------------------------------------------------------ */
-        stage('🐳 7) Docker Build & Run') {
+        // 8. DOCKER PUSH & DEPLOY
+        stage('8) Docker Push & Deploy') {
             steps {
                 script {
-                    echo "🐳 Construction de l'image Docker..."
-
+                    echo "Étape 8/8 : Déploiement Docker"
+                    
+                    // Login Docker Hub
+                    withCredentials([usernamePassword(
+                        credentialsId: 'docker-hub-credentials',
+                        usernameVariable: 'Mohamed Derbel',
+                        passwordVariable: 'user123@Med'
+                    )]) {
+                        sh """
+                            echo "${DOCKER_PASS}" | docker login \
+                                -u "${DOCKER_USER}" --password-stdin
+                        """
+                    }
+                    
+                    // Push vers Docker Hub
                     sh """
-                        docker build -t devops-app:latest .
+                        docker push ${DOCKER_REPO}:${BUILD_VERSION}
+                        docker push ${DOCKER_REPO}:latest
                     """
-
-                    echo "🧹 Suppression ancien conteneur..."
-                    sh "docker rm -f devops-container || true"
-
-                    echo "🚀 Lancement du conteneur..."
+                    
+                    // Déploiement local
+                    sh 'docker rm -f student-app || true'
                     sh """
                         docker run -d \
-                            --name devops-container \
-                            -p 8085:8080 \
-                            devops-app:latest
+                            --name student-app \
+                            -p ${APP_PORT}:8080 \
+                            ${DOCKER_REPO}:latest
                     """
-
-                    echo "🐋 Docker exécuté sur : http://localhost:8085"
                     
-                    // Vérification que l'application démarre
-                    sh "sleep 10"
-                    sh "curl -f http://localhost:8085/actuator/health || echo 'Application en démarrage...'"
+                    // Vérification
+                    sh """
+                        sleep 20
+                        echo "Vérification de l'application..."
+                        curl -s -o /dev/null -w "Code HTTP: %{http_code}\n" \
+                            http://localhost:${APP_PORT}/actuator/health || \
+                            echo "Application démarrée sur port ${APP_PORT}"
+                    """
                 }
             }
         }
     }
 
-    /* ---------------------------------------------------------------------- */
     post {
         always {
-            echo "📊 Statut final : ${currentBuild.result ?: 'UNKNOWN'}"
+            echo "=== PIPELINE TERMINÉE ==="
+            echo "Statut: ${currentBuild.result ?: 'SUCCESS'}"
+            echo "Build: #${BUILD_NUMBER}"
+            echo "Application: http://192.168.136.129:${APP_PORT}"
+            echo "Docker Hub: https://hub.docker.com/r/${DOCKER_REPO.split('/')[0]}/student-management"
         }
         success {
-            echo "🎉 Pipeline exécutée avec SUCCÈS !"
+            echo "✅ DÉPLOIEMENT RÉUSSI"
         }
         failure {
-            echo "❌ Le pipeline a ÉCHOUÉ."
+            echo "❌ DÉPLOIEMENT ÉCHOUÉ"
         }
     }
 }
