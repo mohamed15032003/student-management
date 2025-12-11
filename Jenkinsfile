@@ -2,11 +2,9 @@ pipeline {
     agent any
     
     environment {
-        // VARIABLES OBLIGATOIRES - DOIVENT ÊTRE LÀ
         APP_PORT = '9090'
         DOCKER_REPO = 'mohamedderbel/student-management'
         
-        // SonarQube - seulement si configuré
         SONAR_HOST_URL = 'http://192.168.136.129:9000'
         SONAR_PROJECT_KEY = 'student-management'
     }
@@ -37,19 +35,10 @@ pipeline {
             }
         }
 
-        // 4. PACKAGE
-        stage('4) Package JAR') {
+        // 4. DOCKER BUILD
+        stage('4) Docker Build') {
             steps {
-                echo "Étape 4: Package"
-                sh 'mvn package -DskipTests'
-                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
-            }
-        }
-
-        // 5. DOCKER BUILD
-        stage('5) Docker Build') {
-            steps {
-                echo "Étape 5: Docker Build"
+                echo "Étape 4: Docker Build"
                 script {
                     sh "docker build -t ${DOCKER_REPO}:${BUILD_NUMBER} ."
                     sh "docker build -t ${DOCKER_REPO}:latest ."
@@ -57,10 +46,10 @@ pipeline {
             }
         }
 
-        // 6. SONARQUBE (TEST SIMPLE SANS CREDENTIALS)
-        stage('6) SonarQube Test') {
+        // 5. SONARQUBE ANALYSIS
+        stage('5) SonarQube Analysis') {
             steps {
-                echo "Étape 6: Test SonarQube"
+                echo "Étape 5: SonarQube Analysis"
                 script {
                     sh """
                         echo "Test SonarQube sur ${SONAR_HOST_URL}"
@@ -68,6 +57,15 @@ pipeline {
                         echo "SonarQube non accessible - étape ignorée"
                     """
                 }
+            }
+        }
+
+        // 6. PACKAGE JAR
+        stage('6) Package JAR') {
+            steps {
+                echo "Étape 6: Package JAR"
+                sh 'mvn package -DskipTests'
+                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
             }
         }
 
