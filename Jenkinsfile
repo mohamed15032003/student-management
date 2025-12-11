@@ -1,6 +1,6 @@
-pipeline {
+ppipeline {
     agent any
-
+    
     tools {
         maven 'MAVEN_3'
         jdk 'JDK17'
@@ -11,7 +11,6 @@ pipeline {
     }
 
     stages {
-
         /* ------------------------------------------------------------------ */
         stage('📥 1) Git Clone') {
             steps {
@@ -86,7 +85,36 @@ pipeline {
         }
 
         /* ------------------------------------------------------------------ */
-        stage('🐳 5) Docker Build & Run') {
+        stage('🔍 5) Analyse SonarQube') {
+            steps {
+                echo "🔍 Analyse SonarQube..."
+
+                withSonarQubeEnv('sonarqube') {
+                    sh """
+                        mvn sonar:sonar \
+                            -Dsonar.projectKey=Devops \
+                            -Dsonar.host.url=http://192.168.132.129:9000 \
+                            -Dsonar.login=${SONAR_TOKEN}
+                    """
+                }
+
+                echo "✅ Analyse SonarQube terminée"
+            }
+        }
+
+        /* ------------------------------------------------------------------ */
+        stage('🚦 6) Quality Gate') {
+            steps {
+                echo "🚦 Attente du résultat Quality Gate..."
+                timeout(time: 10, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+                echo "✅ Quality Gate passée avec succès"
+            }
+        }
+
+        /* ------------------------------------------------------------------ */
+        stage('🐳 7) Docker Build & Run') {
             steps {
                 script {
                     echo "🐳 Construction de l'image Docker..."
@@ -107,25 +135,11 @@ pipeline {
                     """
 
                     echo "🐋 Docker exécuté sur : http://localhost:8085"
+                    
+                    // Vérification que l'application démarre
+                    sh "sleep 10"
+                    sh "curl -f http://localhost:8085/actuator/health || echo 'Application en démarrage...'"
                 }
-            }
-        }
-
-        /* ------------------------------------------------------------------ */
-        stage('🔍 6) Analyse SonarQube') {
-            steps {
-                echo "🔍 Analyse SonarQube..."
-
-                withSonarQubeEnv('sonarqube') {
-                    sh """
-                        mvn sonar:sonar \
-                            -Dsonar.projectKey=Devops \
-                            -Dsonar.host.url=http://192.168.132.129:9000 \
-                            -Dsonar.login=${SONAR_TOKEN}
-                    """
-                }
-
-                echo "✅ Analyse SonarQube terminée"
             }
         }
     }
@@ -143,4 +157,3 @@ pipeline {
         }
     }
 }
-
