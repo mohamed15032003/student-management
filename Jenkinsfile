@@ -7,11 +7,11 @@ pipeline {
     }
 
     environment {
+        // Définir TOUTES les variables ici
         SONAR_TOKEN = credentials('jenkins_sonar')
-        DOCKERHUB_CREDS = credentials('docker-hub-credentials')
-        APP_PORT = '9090'
+        APP_PORT = '9090'  // DÉFINI ICI
         BUILD_VERSION = "${BUILD_NUMBER}"
-        DOCKER_REPO = 'mohamed15032003/student-management'
+        DOCKER_REPO = 'mohamed15032003/student-management'  // Remplace par ton username Docker Hub
     }
 
     stages {
@@ -91,7 +91,8 @@ pipeline {
                 script {
                     echo "Étape 8/8 : Déploiement Docker"
                     
-                    // Login Docker Hub avec credentials
+                    // Login Docker Hub (si credentials configurés)
+                    // Si tu n'as pas encore configuré les credentials, commente cette section
                     withCredentials([usernamePassword(
                         credentialsId: 'docker-hub-credentials',
                         usernameVariable: 'DOCKER_USER',
@@ -136,11 +137,8 @@ pipeline {
             echo "=== PIPELINE TERMINÉE ==="
             echo "Statut: ${currentBuild.currentResult}"
             echo "Build: #${BUILD_NUMBER}"
+            // Utilisation correcte de APP_PORT
             echo "Application: http://192.168.136.129:${APP_PORT}"
-            script {
-                def repoParts = "${DOCKER_REPO}".split('/')
-                echo "Docker Hub: https://hub.docker.com/r/${repoParts[0]}/student-management"
-            }
         }
         success {
             echo "✅ DÉPLOIEMENT RÉUSSI"
