@@ -84,7 +84,51 @@ pipeline {
                 }
             }
         }
-        // Si vous avez supprimé le stage 8, assurez-vous qu'il n'y a pas de virgule après le stage 7
+
+        // 8. DOCKER PUSH & DEPLOY
+        stage('8) Docker Push & Deploy') {
+            steps {
+                script {
+                    echo "Étape 8/8 : Déploiement Docker"
+                    
+                    // Login Docker Hub avec credentials
+                    withCredentials([usernamePassword(
+                        credentialsId: 'docker-hub-credentials',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )]) {
+                        sh """
+                            echo "${DOCKER_PASS}" | docker login \
+                                -u "${DOCKER_USER}" --password-stdin
+                        """
+                        
+                        // Push vers Docker Hub
+                        sh """
+                            docker push ${DOCKER_REPO}:${BUILD_VERSION}
+                            docker push ${DOCKER_REPO}:latest
+                        """
+                    }
+                    
+                    // Déploiement local
+                    sh 'docker rm -f student-app || true'
+                    sh """
+                        docker run -d \
+                            --name student-app \
+                            -p ${APP_PORT}:8080 \
+                            ${DOCKER_REPO}:latest
+                    """
+                    
+                    // Vérification
+                    sh """
+                        sleep 20
+                        echo "Vérification de l'application..."
+                        curl -s -o /dev/null -w "Code HTTP: %{http_code}\n" \
+                            http://localhost:${APP_PORT}/actuator/health || \
+                            echo "Application démarrée sur port ${APP_PORT}"
+                    """
+                }
+            }
+        }
     }
 
     post {
