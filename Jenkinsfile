@@ -1,4 +1,4 @@
-ppipeline {
+pipeline {
     agent any
 
     tools {
@@ -14,39 +14,39 @@ ppipeline {
 
         stage('1️⃣ Clone Repository') {
             steps {
-                echo '📥 Clonage du repository Git...'
+                echo "📥 Clonage du repository Git..."
                 git branch: 'main', url: 'https://github.com/mohamed15032003/student-management.git'
-                echo '✅ Clonage terminé'
+                echo "✅ Clonage terminé"
             }
         }
 
         stage('2️⃣ Build Project') {
             steps {
-                echo '🔨 Compilation du projet avec Maven...'
-                sh 'mvn clean compile -DskipTests'
-                echo '✅ Build terminé'
+                echo "🔨 Compilation du projet avec Maven..."
+                sh "mvn clean compile -DskipTests"
+                echo "✅ Build terminé"
             }
         }
 
         stage('3️⃣ Run Tests') {
             steps {
-                echo '🧪 Exécution des tests...'
-                sh 'mvn test'
-                echo '✅ Tests terminés'
+                echo "🧪 Exécution des tests..."
+                sh "mvn test"
+                echo "✅ Tests terminés"
             }
         }
 
         stage('4️⃣ Package JAR') {
             steps {
-                echo '📦 Packaging du projet en JAR...'
-                sh 'mvn package -DskipTests'
-                echo '✅ Package JAR terminé'
+                echo "📦 Packaging du projet en JAR..."
+                sh "mvn package -DskipTests"
+                echo "✅ Package JAR terminé"
             }
         }
 
         stage('5️⃣ SonarQube Analysis') {
             steps {
-                echo '🔍 Analyse de qualité du code avec SonarQube...'
+                echo "🔍 Analyse de qualité du code avec SonarQube..."
                 withSonarQubeEnv('sonarqube') {
                     sh """
                     mvn sonar:sonar \
@@ -56,47 +56,47 @@ ppipeline {
                         -DskipTests
                     """
                 }
-                echo '✅ Analyse SonarQube terminée'
+                echo "✅ Analyse SonarQube terminée"
             }
         }
 
         stage('6️⃣ Docker Build & Run') {
             steps {
-                echo '🐳 Construction de l\'image Docker...'
+                echo "🐳 Construction de l'image Docker..."
 
                 sh """
                 docker build -t student-management-app:latest .
                 """
 
-                echo '🧹 Suppression de l'ancien container s\'il existe...'
+                echo "🧹 Suppression de l'ancien container s'il existe..."
                 sh """
                 docker rm -f student-management-container || true
                 """
 
-                echo '🚀 Lancement du nouveau container Docker...'
+                echo "🚀 Lancement du nouveau container Docker..."
                 sh """
                 docker run -d --name student-management-container -p 8081:8080 student-management-app:latest
                 """
 
-                echo '✅ Docker build & run terminé'
+                echo "✅ Docker build & run terminé"
             }
         }
 
         stage('7️⃣ Archive Artifact') {
             steps {
-                echo '📁 Archivage du fichier JAR...'
+                echo "📁 Archivage du fichier JAR..."
                 archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
-                echo '✅ Archivage terminé'
+                echo "✅ Archivage terminé"
             }
         }
     }
 
     post {
         failure {
-            echo '❌ Le pipeline a échoué'
+            echo "❌ Le pipeline a échoué"
         }
         success {
-            echo '🎉 Pipeline terminé avec succès'
+            echo "🎉 Pipeline terminé avec succès"
         }
     }
 }
