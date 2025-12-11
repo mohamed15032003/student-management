@@ -7,11 +7,11 @@ pipeline {
     }
 
     environment {
-        // Définir TOUTES les variables ici
         SONAR_TOKEN = credentials('jenkins_sonar')
-        APP_PORT = '9090'  // DÉFINI ICI
-        BUILD_VERSION = "${BUILD_NUMBER}"
-        DOCKER_REPO = 'mohamed15032003/student-management'  // Remplace par ton username Docker Hub
+        APP_PORT = '9090'
+        DOCKER_REPO = 'mohamedderbel/student-management'  // Utilise "mohamedderbel" comme nom d'utilisateur
+        DOCKER_USER = 'Mohamed Derbel'
+        DOCKER_PASS = 'user@Med'
     }
 
     stages {
@@ -54,7 +54,7 @@ pipeline {
             steps {
                 echo "Étape 5/8 : Construction image Docker"
                 script {
-                    sh "docker build -t ${DOCKER_REPO}:${BUILD_VERSION} ."
+                    sh "docker build -t ${DOCKER_REPO}:${BUILD_NUMBER} ."
                     sh "docker build -t ${DOCKER_REPO}:latest ."
                 }
             }
@@ -91,24 +91,19 @@ pipeline {
                 script {
                     echo "Étape 8/8 : Déploiement Docker"
                     
-                    // Login Docker Hub (si credentials configurés)
-                    // Si tu n'as pas encore configuré les credentials, commente cette section
-                    withCredentials([usernamePassword(
-                        credentialsId: 'docker-hub-credentials',
-                        usernameVariable: 'DOCKER_USER',
-                        passwordVariable: 'DOCKER_PASS'
-                    )]) {
-                        sh """
-                            echo "${DOCKER_PASS}" | docker login \
-                                -u "${DOCKER_USER}" --password-stdin
-                        """
-                        
-                        // Push vers Docker Hub
-                        sh """
-                            docker push ${DOCKER_REPO}:${BUILD_VERSION}
-                            docker push ${DOCKER_REPO}:latest
-                        """
-                    }
+                    // Login Docker Hub avec vos credentials
+                    sh """
+                        echo "${DOCKER_PASS}" | docker login \
+                            -u "${DOCKER_USER}" --password-stdin
+                    """
+                    
+                    // Push vers Docker Hub
+                    sh """
+                        docker push ${DOCKER_REPO}:${BUILD_NUMBER}
+                        docker push ${DOCKER_REPO}:latest
+                    """
+                    
+                    echo "✅ Images Docker publiées sur Docker Hub"
                     
                     // Déploiement local
                     sh 'docker rm -f student-app || true'
@@ -121,9 +116,9 @@ pipeline {
                     
                     // Vérification
                     sh """
-                        sleep 20
+                        sleep 15
                         echo "Vérification de l'application..."
-                        curl -s -o /dev/null -w "Code HTTP: %{http_code}\n" \
+                        curl -s -o /dev/null -w "Code HTTP: %{http_code}\\n" \
                             http://localhost:${APP_PORT}/actuator/health || \
                             echo "Application démarrée sur port ${APP_PORT}"
                     """
@@ -137,11 +132,12 @@ pipeline {
             echo "=== PIPELINE TERMINÉE ==="
             echo "Statut: ${currentBuild.currentResult}"
             echo "Build: #${BUILD_NUMBER}"
-            // Utilisation correcte de APP_PORT
             echo "Application: http://192.168.136.129:${APP_PORT}"
+            echo "Docker Hub: https://hub.docker.com/r/mohamedderbel/student-management"
         }
         success {
             echo "✅ DÉPLOIEMENT RÉUSSI"
+            echo "✅ Image Docker disponible sur Docker Hub"
         }
         failure {
             echo "❌ DÉPLOIEMENT ÉCHOUÉ"
