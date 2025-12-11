@@ -2,11 +2,11 @@ pipeline {
     agent any
     
     environment {
-        // VARIABLES OBLIGATOIRES - DOIVENT ÊTRE LÀ !
-        APP_PORT = '9090'  # C'EST ÇA QUI MANQUE !
+        // VARIABLES OBLIGATOIRES - DOIVENT ÊTRE LÀ
+        APP_PORT = '9090'
         DOCKER_REPO = 'mohamedderbel/student-management'
         
-        # SonarQube - seulement si configuré
+        // SonarQube - seulement si configuré
         SONAR_HOST_URL = 'http://192.168.136.129:9000'
         SONAR_PROJECT_KEY = 'student-management'
     }
@@ -62,7 +62,6 @@ pipeline {
             steps {
                 echo "Étape 6: Test SonarQube"
                 script {
-                    // Test simple de connexion
                     sh """
                         echo "Test SonarQube sur ${SONAR_HOST_URL}"
                         curl -s ${SONAR_HOST_URL}/api/system/status || \
@@ -111,7 +110,6 @@ pipeline {
             echo "PIPELINE TERMINÉE"
             echo "Build: #${BUILD_NUMBER}"
             echo "Statut: ${currentBuild.currentResult}"
-            // CORRECTION: Utilisation de ${env.APP_PORT} pour être sûr
             echo "Port d'application: ${env.APP_PORT}"
             echo "========================================"
         }
@@ -120,11 +118,8 @@ pipeline {
         }
         failure {
             echo "❌ ÉCHEC"
-            // CORRECTION: Pas de 'sh' dans failure sans node
             echo "Vérifiez les logs pour les détails"
         }
-    }
-}
     }
 }
 
