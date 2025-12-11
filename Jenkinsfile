@@ -1,4 +1,4 @@
-pipeline {
+ppipeline {
     agent any
 
     tools {
@@ -7,10 +7,11 @@ pipeline {
     }
 
     environment {
-        SONAR_TOKEN = credentials('SONARQUBE_TOKEN')  
+        SONAR_TOKEN = credentials('SONARQUBE_TOKEN')
     }
 
     stages {
+
         stage('1️⃣ Clone Repository') {
             steps {
                 echo '📥 Clonage du repository Git...'
@@ -30,7 +31,7 @@ pipeline {
         stage('3️⃣ Run Tests') {
             steps {
                 echo '🧪 Exécution des tests...'
-                sh 'mvn test -DskipTests'
+                sh 'mvn test'
                 echo '✅ Tests terminés'
             }
         }
@@ -59,7 +60,29 @@ pipeline {
             }
         }
 
-        stage('6️⃣ Archive Artifact') {
+        stage('6️⃣ Docker Build & Run') {
+            steps {
+                echo '🐳 Construction de l\'image Docker...'
+
+                sh """
+                docker build -t student-management-app:latest .
+                """
+
+                echo '🧹 Suppression de l'ancien container s\'il existe...'
+                sh """
+                docker rm -f student-management-container || true
+                """
+
+                echo '🚀 Lancement du nouveau container Docker...'
+                sh """
+                docker run -d --name student-management-container -p 8081:8080 student-management-app:latest
+                """
+
+                echo '✅ Docker build & run terminé'
+            }
+        }
+
+        stage('7️⃣ Archive Artifact') {
             steps {
                 echo '📁 Archivage du fichier JAR...'
                 archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
@@ -77,3 +100,4 @@ pipeline {
         }
     }
 }
+
