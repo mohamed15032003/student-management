@@ -2,8 +2,10 @@ pipeline {
     agent any
     
     environment {
-        DOCKER_REPO = 'mohamedderbel/student-management'
-        APP_PORT = '9090'
+        DOCKER_IMAGE = 'student-management:latest'
+        K8S_NAMESPACE = 'devops'
+        SONAR_HOST = 'http://192.168.136.129:9000'
+        APP_VERSION = "${BUILD_NUMBER}"
     }
 
     stages {
@@ -29,114 +31,203 @@ pipeline {
         }
 
         // =============================================
-        // STAGE 3: TEST
+        // STAGE 3: UNIT TESTS
         // =============================================
-        stage('Test') {
+        stage('Unit Tests') {
             steps {
-                echo '🧪 Running tests...'
-                script {
-                    def testStatus = sh(
-                        script: 'mvn test -Dspring.profiles.active=test',
-                        returnStatus: true
-                    )
-                    
-                    junit allowEmptyResults: true, testResults: 'target/surefire-reports/*.xml'
-                    
-                    if (testStatus != 0) {
-                        echo '⚠️ Tests failed but continuing...'
-                        unstable('Tests failed')
-                    }
-                }
+                echo '🧪 Running unit tests...'
+                sh 'mvn test'
+                
+                // Archiver les résultats des tests
+                junit 'target/surefire-reports/*.xml'
+                
+                // Générer le rapport de couverture Jacoco
+                sh 'mvn jacoco:report'
             }
         }
 
         // =============================================
-        // STAGE 4: JAR
+        // STAGE 4: SONARQUBE ANALYSIS
         // =============================================
-        stage('JAR') {
-            steps {
-                echo '📦 Building JAR...'
-                sh 'mvn package -DskipTests'
-                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
-                sh 'ls -lh target/*.jar'
-            }
-        }
-
-        // =============================================
-        // STAGE 5: SONARQUBE
-        // =============================================
-        stage('SonarQube') {
-            steps {
-                echo '📊 SonarQube analysis...'
-                script {
-                    def sonar = sh(
-                        script: 'curl -s -o /dev/null -w "%{http_code}" http://192.168.136.129:9000 2>/dev/null || echo "000"',
+        stage('SonarQube Analysis') {
+            when {
+                expression { 
+                    return sh(
+                        script: "curl -s -o /dev/null -w '%{http_code}' ${SONAR_HOST}/api/system/status 2>/dev/null || echo '000'",
                         returnStdout: true
-                    ).trim()
-                    
-                    if (sonar == "200") {
-                        try {
-                            sh '''
-                                mvn sonar:sonar \
-                                  -Dsonar.projectKey=student-management \
-                                  -Dsonar.host.url=http://192.168.136.129:9000 \
-                                  || echo "SonarQube analysis failed"
-                            '''
-                        } catch (Exception e) {
-                            echo "⚠️ SonarQube skipped: ${e.message}"
-                        }
-                    } else {
-                        echo '⚠️ SonarQube not available'
-                    }
+                    ).trim() == "200"
+                }
+            }
+            steps {
+                echo '📊 Running SonarQube analysis...'
+                withSonarQubeEnv('SonarQube') {
+                    sh """
+                        mvn sonar:sonar \
+                          -Dsonar.projectKey=student-management-${APP_VERSION} \
+                          -Dsonar.projectName='Student Management' \
+                          -Dsonar.projectVersion=${APP_VERSION} \
+                          -Dsonar.java.source=17 \
+                          -Dsonar.sources=src/main/java \
+                          -Dsonar.tests=src/test/java \
+                          -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml \
+                          -Dsonar.host.url=${SONAR_HOST} \
+                          -Dsonar.exclusions='**/target/**,**/node_modules/**,**/*.yml,**/*.yaml'
+                    """
+                }
+                
+                // Attendre le résultat de la qualité
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: false
                 }
             }
         }
 
         // =============================================
-        // STAGE 6: DOCKER
+        // STAGE 5: BUILD JAR - STAGE SPÉCIFIQUE POUR LE JAR
         // =============================================
-        stage('Docker') {
+        stage('Build JAR') {
+            steps {
+                echo '📦 Building JAR file...'
+                script {
+                    // Package sans tests (déjà faits)
+                    sh 'mvn package -DskipTests'
+                    
+                    // Vérifier le JAR généré
+                    sh 'ls -lh target/*.jar'
+                    
+                    // Afficher les infos du JAR
+                    sh '''
+                        echo "=== JAR INFORMATION ==="
+                        ls -la target/*.jar
+                        echo "Taille du JAR:"
+                        du -h target/*.jar
+                    '''
+                    
+                    // Archiver le JAR
+                    archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+                    
+                    // Sauvegarder aussi le JAR avec version
+                    sh """
+                        cp target/*.jar target/student-management-${APP_VERSION}.jar
+                        ls -la target/*.jar
+                    """
+                    
+                    echo "✅ JAR créé: student-management-${APP_VERSION}.jar"
+                }
+            }
+        }
+
+        // =============================================
+        // STAGE 6: DOCKER BUILD
+        // =============================================
+        stage('Docker Build') {
             steps {
                 echo '🐳 Building Docker image...'
                 script {
-                    // Vérifier Dockerfile
-                    if (!fileExists('Dockerfile')) {
-                        error('❌ Dockerfile not found! Create it at project root.')
-                    }
+                    // Vérifier que le JAR existe
+                    sh 'test -f target/*.jar || (echo "❌ JAR not found!" && exit 1)'
                     
-                    // Build
-                    sh "docker build -t ${DOCKER_REPO}:${BUILD_NUMBER} ."
-                    sh "docker tag ${DOCKER_REPO}:${BUILD_NUMBER} ${DOCKER_REPO}:latest"
+                    // Activer l'environnement Docker de Minikube
+                    sh 'eval $(minikube docker-env)'
                     
-                    // Push (optional)
-                    try {
-                        withCredentials([usernamePassword(
-                            credentialsId: 'dockerhub-credentials',
-                            usernameVariable: 'USER',
-                            passwordVariable: 'PASS'
-                        )]) {
-                            sh 'echo "$PASS" | docker login -u "$USER" --password-stdin'
-                            sh "docker push ${DOCKER_REPO}:${BUILD_NUMBER}"
-                            sh "docker push ${DOCKER_REPO}:latest"
-                            sh 'docker logout'
-                        }
-                    } catch (Exception e) {
-                        echo "⚠️ Docker push skipped: ${e.message}"
-                    }
-                    
-                    // Deploy
-                    sh 'docker stop student-app 2>/dev/null || true'
-                    sh 'docker rm student-app 2>/dev/null || true'
+                    // Construire l'image
                     sh """
-                        docker run -d \
-                          --name student-app \
-                          --restart unless-stopped \
-                          -p ${APP_PORT}:8080 \
-                          ${DOCKER_REPO}:latest
+                        docker build \
+                          --build-arg JAR_FILE=target/*.jar \
+                          -t ${DOCKER_IMAGE} \
+                          -t ${DOCKER_IMAGE}:${APP_VERSION} \
+                          .
                     """
                     
-                    sleep 15
-                    sh "curl -f http://localhost:${APP_PORT}/actuator/health || echo 'Health check pending...'"
+                    // Vérifier les images créées
+                    sh 'docker images | grep student-management'
+                    
+                    // Désactiver l'environnement Minikube
+                    sh 'eval $(minikube docker-env -u)'
+                    
+                    echo "✅ Image Docker créée: ${DOCKER_IMAGE}:${APP_VERSION}"
+                }
+            }
+        }
+
+        // =============================================
+        // STAGE 7: DEPLOY TO KUBERNETES
+        // =============================================
+        stage('Deploy to Kubernetes') {
+            steps {
+                echo '🚀 Deploying to Kubernetes...'
+                script {
+                    // Mettre à jour l'image dans le déploiement
+                    sh """
+                        kubectl set image deployment/student-management \
+                          student-app=${DOCKER_IMAGE}:${APP_VERSION} \
+                          -n ${K8S_NAMESPACE}
+                    """
+                    
+                    // Vérifier le déploiement
+                    sh """
+                        kubectl rollout status deployment/student-management \
+                          -n ${K8S_NAMESPACE} \
+                          --timeout=300s
+                    """
+                    
+                    // Vérifier les pods
+                    sh "kubectl get pods -n ${K8S_NAMESPACE} | grep student-management"
+                    
+                    echo "✅ Déploiement Kubernetes terminé!"
+                }
+            }
+        }
+
+        // =============================================
+        // STAGE 8: INTEGRATION TESTS
+        // =============================================
+        stage('Integration Tests') {
+            steps {
+                echo '🔍 Running integration tests...'
+                script {
+                    // Obtenir l'URL
+                    def url = sh(
+                        script: "minikube service student-service -n ${K8S_NAMESPACE} --url",
+                        returnStdout: true
+                    ).trim()
+                    
+                    echo "🌐 Application URL: ${url}"
+                    
+                    // Attendre que l'application soit prête
+                    sh 'sleep 30'
+                    
+                    // Tests d'intégration
+                    sh """
+                        echo "=== INTEGRATION TESTS ==="
+                        
+                        # Test 1: Health check
+                        echo "1. Testing health endpoint..."
+                        curl -f ${url}/actuator/health || (echo "❌ Health check failed" && exit 1)
+                        echo "✅ Health check passed"
+                        
+                        # Test 2: Root endpoint
+                        echo "2. Testing root endpoint..."
+                        STATUS_CODE=\$(curl -s -o /dev/null -w "%{http_code}" ${url})
+                        if [ "\$STATUS_CODE" = "200" ] || [ "\$STATUS_CODE" = "404" ]; then
+                            echo "✅ Root endpoint returned \$STATUS_CODE"
+                        else
+                            echo "⚠️ Root endpoint returned \$STATUS_CODE"
+                        fi
+                        
+                        # Test 3: Specific endpoints
+                        echo "3. Testing API endpoints..."
+                        curl -s ${url}/students && echo "✅ /students endpoint OK" || echo "⚠️ /students endpoint not available"
+                        curl -s ${url}/department/getAllDepartment && echo "✅ /department endpoint OK" || echo "⚠️ /department endpoint not available"
+                        
+                        # Test 4: Database connection
+                        echo "4. Testing database connection..."
+                        kubectl exec -it \$(kubectl get pod -l app=mysql -n ${K8S_NAMESPACE} -o jsonpath='{.items[0].metadata.name}') \
+                          -n ${K8S_NAMESPACE} -- \
+                          mysql -u root -proot123 -e "USE springdb; SHOW TABLES;" && \
+                          echo "✅ Database connection OK" || \
+                          echo "⚠️ Database connection issue"
+                    """
                 }
             }
         }
@@ -144,21 +235,76 @@ pipeline {
 
     post {
         always {
-            echo "════════════════════════════════"
-            echo "Build #${BUILD_NUMBER} - ${currentBuild.result}"
-            echo "URL: http://192.168.136.129:${APP_PORT}"
-            echo "════════════════════════════════"
-            sh 'docker image prune -f 2>/dev/null || true'
+            echo "══════════════════════════════════════════════════════════"
+            echo "📊 PIPELINE REPORT - Build #${BUILD_NUMBER}"
+            echo "══════════════════════════════════════════════════════════"
+            
+            script {
+                // Nettoyage
+                sh 'docker image prune -f 2>/dev/null || true'
+                
+                // Rapport final
+                def url = sh(
+                    script: "minikube service student-service -n ${K8S_NAMESPACE} --url 2>/dev/null || echo 'N/A'",
+                    returnStdout: true
+                ).trim()
+                
+                echo "📦 APPLICATION INFO:"
+                echo "  Version: ${APP_VERSION}"
+                echo "  URL: ${url}"
+                echo "  Namespace: ${K8S_NAMESPACE}"
+                echo "  Docker Image: ${DOCKER_IMAGE}:${APP_VERSION}"
+                
+                // État Kubernetes
+                sh """
+                    echo ""
+                    echo "📊 KUBERNETES STATUS:"
+                    kubectl get pods -n ${K8S_NAMESPACE} 2>/dev/null | grep -E "NAME|student|mysql" || true
+                    echo ""
+                    echo "🔗 SERVICES:"
+                    kubectl get svc -n ${K8S_NAMESPACE} 2>/dev/null | grep -E "NAME|student|mysql" || true
+                """
+            }
+            
+            // Sauvegarder les rapports
+            archiveArtifacts artifacts: 'target/site/jacoco/**/*', fingerprint: true
+            junit allowEmptyResults: true, testResults: 'target/surefire-reports/*.xml'
         }
+        
         success {
-            echo "✅ SUCCESS"
+            echo '✅ PIPELINE SUCCESSFUL!'
+            script {
+                def url = sh(
+                    script: "minikube service student-service -n ${K8S_NAMESPACE} --url",
+                    returnStdout: true
+                ).trim()
+                
+                echo "🎉 Application déployée avec succès!"
+                echo "🔗 Accédez à: ${url}"
+                echo "📦 JAR version: ${APP_VERSION}"
+            }
         }
-        unstable {
-            echo "⚠️ UNSTABLE (tests failed)"
-        }
+        
         failure {
-            echo "❌ FAILURE"
-            echo "Check: 1) Dockerfile exists 2) application-test.properties created"
+            echo '❌ PIPELINE FAILED!'
+            script {
+                // Rollback automatique
+                sh """
+                    kubectl rollout undo deployment/student-management \
+                      -n ${K8S_NAMESPACE} \
+                      2>/dev/null && echo "⏪ Rollback effectué" || echo "⚠️ Rollback non disponible"
+                """
+                
+                // Logs des pods en échec
+                sh """
+                    echo "=== ERROR LOGS ==="
+                    kubectl logs -l app=student-management -n ${K8S_NAMESPACE} --tail=50 2>/dev/null || true
+                """
+            }
+        }
+        
+        unstable {
+            echo '⚠️ PIPELINE UNSTABLE (Tests or quality check failed)'
         }
     }
 }
