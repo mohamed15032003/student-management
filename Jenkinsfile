@@ -2,22 +2,18 @@ pipeline {
     agent any
 
     environment {
-        APP_NAME = "student-management"
-        IMAGE_TAG = "1.0.0"
-        JAVA_HOME = "/usr/lib/jvm/java-17-openjdk-amd64"
-        PATH = "${JAVA_HOME}/bin:${env.PATH}"
-        DOCKER_IMAGE = "mohamedderbel/student-management"
-        SONAR_URL = "http://192.168.132.129:9000"
+        SONAR_HOST_URL = 'http://192.168.132.129:9000' // adapte si nécessaire
+        SONAR_PROJECT_KEY = 'student-management'
     }
 
     stages {
-
         // 1) Git Clone
         stage('1) Git Clone') {
             steps {
                 git branch: 'main',
-                    url: 'https://github.com/mohamedderbel/student-management.git'
-                echo "✅ Code source récupéré depuis GitHub"
+                    url: 'https://github.com/mohamedderbel/student-management.git',
+                    credentialsId: 'clone-creds'
+                sh 'echo "Code source récupéré avec succès !"'
             }
         }
 
@@ -25,7 +21,7 @@ pipeline {
         stage('2) Build Maven') {
             steps {
                 sh 'mvn clean compile'
-                echo "✅ Compilation réussie"
+                sh 'echo "Compilation Maven réussie !"'
             }
         }
 
@@ -34,11 +30,13 @@ pipeline {
             steps {
                 sh 'mvn package -DskipTests'
                 sh '''
-                    echo "=== Vérification JAR ==="
-                    ls -lh target/*.jar
+                    echo "=== ARTEFACTS ==="
+                    ls -la target/*.jar
+                    echo "=== TAILLE ==="
+                    du -h target/*.jar
                 '''
-                archiveArtifacts artifacts: 'target/*.jar'
-                echo "✅ JAR archivé dans Jenkins"
+                archiveArtifacts 'target/*.jar'
+                sh 'echo "JAR archivé dans Jenkins"'
             }
         }
 
@@ -46,12 +44,12 @@ pipeline {
         stage('4) SonarQube Analysis') {
             steps {
                 withCredentials([string(credentialsId: 'jenkins_sonar', variable: 'SONAR_TOKEN')]) {
-                    sh '''
+                    sh """
                         mvn sonar:sonar \
-                        -Dsonar.projectKey=student-management \
-                        -Dsonar.host.url=$SONAR_URL \
-                        -Dsonar.login=$SONAR_TOKEN
-                    '''
+                          -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                          -Dsonar.host.url=${SONAR_HOST_URL} \
+                          -Dsonar.login=$SONAR_TOKEN
+                    """
                 }
             }
         }
@@ -59,36 +57,26 @@ pipeline {
         // 5) Docker Build & Push
         stage('5) Docker Build & Push') {
             steps {
-                withCredentials([usernamePassword(
-                    credentialsId: 'dockerhub',
-                    usernameVariable: 'DOCKER_USER',
-                    passwordVariable: 'DOCKER_PASS'
-                )]) {
-                    sh '''
-                        echo "=== Vérification JAR avant Docker ==="
-                        ls -lh target/*.jar
-
-                        echo "🐳 Build Docker"
-                        docker build -t $DOCKER_USER/$APP_NAME:$IMAGE_TAG .
-
-                        echo "🔐 Login DockerHub"
-                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-
-                        echo "📤 Push Docker"
-                        docker push $DOCKER_USER/$APP_NAME:$IMAGE_TAG
-                    '''
+                script {
+                    withCredentials([usernamePassword(
+                        credentialsId: 'dockerhub',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )]) {
+                        sh """
+                            docker build -t $DOCKER_USER/student-management:1.0.0 .
+                            echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                            docker push $DOCKER_USER/student-management:1.0.0
+                        """
+                    }
                 }
             }
         }
     }
 
     post {
-        success {
-            echo '🎉 PIPELINE RÉUSSIE – Build Maven + SonarQube + Docker push OK'
-        }
-        failure {
-            echo '❌ PIPELINE EN ÉCHEC'
-        }
+        success { echo '✅ Pipeline exécuté avec succès !' }
+        failure { echo '❌ Pipeline échoué.' }
     }
 }
 
