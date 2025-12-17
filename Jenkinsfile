@@ -7,15 +7,15 @@ pipeline {
     }
 
     stages {
-        // 1) Git Clone
         stage('1) Git Clone') {
-            steps {
-                git branch: 'main',
-                    url: 'https://github.com/mohamedderbel/student-management.git',
-                    credentialsId: 'clone-creds'
-                sh 'echo "Code source récupéré avec succès !"'
-            }
-        }
+    steps {
+        git branch: 'main',
+            url: 'https://github.com/mohamed15032003/student-management.git',
+            credentialsId: 'clone-creds'
+        sh 'echo "Code source récupéré avec succès !"'
+    }
+}
+
 
         // 2) Build Maven
         stage('2) Build Maven') {
