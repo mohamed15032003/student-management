@@ -1,58 +1,89 @@
 pipeline {
     agent any
+
     environment {
-        K8S_NAMESPACE = 'devops'
-        DOCKER_IMAGE = 'student-management:latest'
+        APP_NAME = "student-management"
+        IMAGE_TAG = "1.0.0"
     }
+
     stages {
-        stage('Clone & Build') {
+
+        // 1) Git Clone
+        stage('1) Git Clone') {
             steps {
-                checkout scm
-                sh 'mvn clean package -DskipTests'
-                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+                git branch: 'main',
+                    url: 'https://github.com/mohamedderbel/student-management.git'
+                echo "✅ Code source récupéré depuis GitHub"
             }
         }
-        stage('Deploy to Kubernetes') {
+
+        // 2) Build
+        stage('2) Build') {
             steps {
-                script {
-                    // Construire l'image
+                sh 'mvn clean compile'
+                echo "✅ Compilation réussie"
+            }
+        }
+
+        // 3) Build JAR
+        stage('3) Build JAR') {
+            steps {
+                sh 'mvn package -DskipTests'
+                sh '''
+                    echo "=== ARTEFACT JAR ==="
+                    ls -lh target/*.jar
+                '''
+                archiveArtifacts artifacts: 'target/*.jar'
+                echo "✅ JAR archivé dans Jenkins"
+            }
+        }
+
+        // 4) SonarQube Analysis
+        stage('4) SonarQube Analysis') {
+            steps {
+                withCredentials([string(credentialsId: 'jenkins_sonar', variable: 'SONAR_TOKEN')]) {
                     sh '''
-                        # Construire dans Minikube
-                        eval $(minikube docker-env)
-                        docker build -t student-management:latest .
-                        eval $(minikube docker-env -u)
+                        echo "🔍 Analyse SonarQube"
+                        mvn sonar:sonar \
+                        -Dsonar.projectKey=student-management \
+                        -Dsonar.host.url=http://192.168.132.129:9000 \
+                        -Dsonar.login=$SONAR_TOKEN
                     '''
-                    
-                    // Déployer
-                    sh """
-                        kubectl set image deployment/student-management \\
-                          student-app=student-management:latest \\
-                          -n ${K8S_NAMESPACE}
-                        
-                        kubectl rollout status deployment/student-management \\
-                          -n ${K8S_NAMESPACE} --timeout=300s
-                    """
                 }
             }
         }
-        stage('Verify') {
+
+        // 5) Build & Push Docker Image
+        stage('5) Docker Build & Push') {
             steps {
-                script {
-                    sh 'sleep 30'
-                    sh "kubectl get pods -n ${K8S_NAMESPACE}"
-                    sh "minikube service student-service -n ${K8S_NAMESPACE} --url"
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    sh '''
+                        echo "🐳 Build image Docker"
+                        docker build -t $DOCKER_USER/student-management:$IMAGE_TAG .
+
+                        echo "🔐 Login DockerHub"
+                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+
+                        echo "📤 Push image Docker"
+                        docker push $DOCKER_USER/student-management:$IMAGE_TAG
+
+                        echo "✅ Image Docker publiée avec succès"
+                    '''
                 }
             }
         }
     }
+
     post {
         success {
-            echo '✅ Pipeline réussie!'
-            sh 'echo "Application déployée avec succès"'
+            echo '🎉 PIPELINE RÉUSSIE – BUILD + SONAR + DOCKER OK'
         }
         failure {
-            echo '❌ Pipeline échouée'
-            sh 'kubectl logs -l app=student-management -n devops --tail=50'
+            echo '❌ PIPELINE EN ÉCHEC'
         }
     }
 }
