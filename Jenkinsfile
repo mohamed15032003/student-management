@@ -4,20 +4,23 @@ pipeline {
     environment {
         APP_NAME = "student-management"
         IMAGE_TAG = "1.0.0"
+        JAVA_HOME = "/usr/lib/jvm/java-17-openjdk-amd64"
+        PATH = "${JAVA_HOME}/bin:${env.PATH}"
     }
 
     stages {
 
-        // 1) Git Clone
+        // 1) Git Clone avec credentials GitHub Token
         stage('1) Git Clone') {
             steps {
                 git branch: 'main',
-                    url: 'https://github.com/mohamedderbel/student-management.git'
+                    url: 'https://github.com/mohamedderbel/student-management.git',
+                    credentialsId: 'github-creds'
                 echo "✅ Code source récupéré depuis GitHub"
             }
         }
 
-        // 2) Build
+        // 2) Build Maven
         stage('2) Build') {
             steps {
                 sh 'mvn clean compile'
@@ -30,7 +33,7 @@ pipeline {
             steps {
                 sh 'mvn package -DskipTests'
                 sh '''
-                    echo "=== ARTEFACT JAR ==="
+                    echo "=== Vérification JAR ==="
                     ls -lh target/*.jar
                 '''
                 archiveArtifacts artifacts: 'target/*.jar'
@@ -43,7 +46,6 @@ pipeline {
             steps {
                 withCredentials([string(credentialsId: 'jenkins_sonar', variable: 'SONAR_TOKEN')]) {
                     sh '''
-                        echo "🔍 Analyse SonarQube"
                         mvn sonar:sonar \
                         -Dsonar.projectKey=student-management \
                         -Dsonar.host.url=http://192.168.132.129:9000 \
@@ -53,7 +55,7 @@ pipeline {
             }
         }
 
-        // 5) Build & Push Docker Image
+        // 5) Docker Build & Push
         stage('5) Docker Build & Push') {
             steps {
                 withCredentials([usernamePassword(
@@ -62,16 +64,17 @@ pipeline {
                     passwordVariable: 'DOCKER_PASS'
                 )]) {
                     sh '''
-                        echo "🐳 Build image Docker"
+                        echo "=== Vérification JAR avant Docker ==="
+                        ls -lh target/*.jar
+
+                        echo "🐳 Build Docker"
                         docker build -t $DOCKER_USER/student-management:$IMAGE_TAG .
 
                         echo "🔐 Login DockerHub"
                         echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
 
-                        echo "📤 Push image Docker"
+                        echo "📤 Push Docker"
                         docker push $DOCKER_USER/student-management:$IMAGE_TAG
-
-                        echo "✅ Image Docker publiée avec succès"
                     '''
                 }
             }
@@ -80,7 +83,7 @@ pipeline {
 
     post {
         success {
-            echo '🎉 PIPELINE RÉUSSIE – BUILD + SONAR + DOCKER OK'
+            echo '🎉 PIPELINE RÉUSSIE – Build + Sonar + Docker OK'
         }
         failure {
             echo '❌ PIPELINE EN ÉCHEC'
