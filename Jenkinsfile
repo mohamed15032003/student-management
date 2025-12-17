@@ -6,22 +6,23 @@ pipeline {
         IMAGE_TAG = "1.0.0"
         JAVA_HOME = "/usr/lib/jvm/java-17-openjdk-amd64"
         PATH = "${JAVA_HOME}/bin:${env.PATH}"
+        DOCKER_IMAGE = "mohamedderbel/student-management"
+        SONAR_URL = "http://192.168.132.129:9000"
     }
 
     stages {
 
-        // 1) Git Clone avec credentials GitHub Token
+        // 1) Git Clone
         stage('1) Git Clone') {
             steps {
                 git branch: 'main',
-                    url: 'https://github.com/mohamedderbel/student-management.git',
-                    credentialsId: 'github-creds'
+                    url: 'https://github.com/mohamedderbel/student-management.git'
                 echo "✅ Code source récupéré depuis GitHub"
             }
         }
 
         // 2) Build Maven
-        stage('2) Build') {
+        stage('2) Build Maven') {
             steps {
                 sh 'mvn clean compile'
                 echo "✅ Compilation réussie"
@@ -48,7 +49,7 @@ pipeline {
                     sh '''
                         mvn sonar:sonar \
                         -Dsonar.projectKey=student-management \
-                        -Dsonar.host.url=http://192.168.132.129:9000 \
+                        -Dsonar.host.url=$SONAR_URL \
                         -Dsonar.login=$SONAR_TOKEN
                     '''
                 }
@@ -68,13 +69,13 @@ pipeline {
                         ls -lh target/*.jar
 
                         echo "🐳 Build Docker"
-                        docker build -t $DOCKER_USER/student-management:$IMAGE_TAG .
+                        docker build -t $DOCKER_USER/$APP_NAME:$IMAGE_TAG .
 
                         echo "🔐 Login DockerHub"
                         echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
 
                         echo "📤 Push Docker"
-                        docker push $DOCKER_USER/student-management:$IMAGE_TAG
+                        docker push $DOCKER_USER/$APP_NAME:$IMAGE_TAG
                     '''
                 }
             }
@@ -83,10 +84,11 @@ pipeline {
 
     post {
         success {
-            echo '🎉 PIPELINE RÉUSSIE – Build + Sonar + Docker OK'
+            echo '🎉 PIPELINE RÉUSSIE – Build Maven + SonarQube + Docker push OK'
         }
         failure {
             echo '❌ PIPELINE EN ÉCHEC'
         }
     }
 }
+
