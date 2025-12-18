@@ -4,105 +4,90 @@ pipeline {
     environment {
         APP_NAME = 'student-management'
         DOCKER_IMAGE = 'student-management-app'
-        DOCKER_TAG = "${BUILD_NUMBER}"
+        K8S_NAMESPACE = 'student-namespace'
     }
     
     stages {
-        stage('1) Git Clone') {
+        stage('1) Build') {
             steps {
-                git(
-                    url: 'https://github.com/mohamed15032003/student-management.git',
-                    branch: 'main',
-                    credentialsId: 'github-creds'
-                )
+                git url: 'https://github.com/mohamed15032003/student-management.git', branch: 'main'
+                sh 'mvn clean package -DskipTests'
             }
         }
         
-        stage('2) Build') {
+        stage('2) Docker Build') {
             steps {
                 sh '''
-                    echo "=== COMPILATION ==="
-                    mvn clean compile
-                    echo "✅ Compilation terminée"
-                '''
-            }
-        }
-        
-        stage('3) Optional: SonarQube') {
-            when {
-                expression { 
-                    // Optionnel - seulement si SonarQube fonctionne
-                    return false // Mettre à true quand SonarQube fonctionne
-                }
-            }
-            steps {
-                script {
-                    echo "ℹ️ SonarQube temporairement désactivé"
-                    echo "Pour activer:"
-                    echo "1. Accédez à http://localhost:9000"
-                    echo "2. Login: admin / Password: admin"
-                    echo "3. Créez un token"
-                    echo "4. Ajoutez SONARQUBE_TOKEN dans Jenkins"
-                }
-            }
-        }
-        
-        stage('4) Package') {
-            steps {
-                sh '''
-                    echo "=== GÉNÉRATION JAR ==="
-                    mvn clean package -DskipTests
-                    echo "✅ JAR généré"
-                    ls -lh target/*.jar
-                '''
-                archiveArtifacts artifacts: 'target/*.jar'
-            }
-        }
-        
-        stage('5) Docker Build') {
-            steps {
-                sh '''
-                    echo "=== CONSTRUCTION DOCKER ==="
-                    cat > Dockerfile << 'EOF'
+                    cat > Dockerfile << EOF
 FROM openjdk:17-jdk-slim
-WORKDIR /app
 COPY target/student-management-0.0.1-SNAPSHOT.jar app.jar
-EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "/app.jar"]
 EOF
-                    docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
-                    docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest
+                    docker build -t ${DOCKER_IMAGE}:latest .
                 '''
             }
         }
         
-        stage('6) Deploy') {
+        stage('3) Deploy to Minikube') {
             steps {
                 sh '''
-                    echo "=== DÉPLOIEMENT ==="
-                    docker stop ${APP_NAME} 2>/dev/null || true
-                    docker rm ${APP_NAME} 2>/dev/null || true
-                    docker run -d \
-                        --name ${APP_NAME} \
-                        -p 8080:8080 \
-                        --restart unless-stopped \
-                        ${DOCKER_IMAGE}:latest
-                    echo "✅ Application déployée"
+                    # Charger l'image dans Minikube
+                    minikube image load ${DOCKER_IMAGE}:latest
+                    
+                    # Déployer avec kubectl
+                    cat > deploy.yaml << EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${APP_NAME}
+  namespace: ${K8S_NAMESPACE}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ${APP_NAME}
+  template:
+    metadata:
+      labels:
+        app: ${APP_NAME}
+    spec:
+      containers:
+      - name: ${APP_NAME}
+        image: ${DOCKER_IMAGE}:latest
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${APP_NAME}-service
+  namespace: ${K8S_NAMESPACE}
+spec:
+  type: NodePort
+  selector:
+    app: ${APP_NAME}
+  ports:
+  - port: 8080
+    targetPort: 8080
+    nodePort: 30080
+EOF
+                    
+                    # Créer namespace et déployer
+                    kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+                    kubectl apply -f deploy.yaml
                 '''
             }
         }
         
-        stage('7) Verify') {
+        stage('4) Verify') {
             steps {
                 sh '''
-                    echo "=== VÉRIFICATION ==="
-                    sleep 30
+                    sleep 45
+                    IP=$(minikube ip)
+                    echo "🌐 Application disponible sur:"
+                    echo "   http://${IP}:30080/"
                     echo "Test d'accès..."
-                    curl -s http://localhost:8080/actuator/health || echo "En cours de démarrage"
-                    echo ""
-                    echo "🌐 APPLICATION DISPONIBLE SUR:"
-                    echo "   http://localhost:8080"
-                    echo "   http://localhost:8080/actuator/health"
+                    curl http://${IP}:30080/actuator/health || echo "En cours de démarrage"
                 '''
             }
         }
@@ -110,17 +95,7 @@ EOF
     
     post {
         always {
-            sh 'rm -f Dockerfile 2>/dev/null || true'
-        }
-        success {
-            echo '🎉 DÉPLOIEMENT RÉUSSI !'
-        }
-        failure {
-            echo '❌ ÉCHEC DU DÉPLOIEMENT'
-            sh '''
-                docker stop ${APP_NAME} 2>/dev/null || true
-                docker rm ${APP_NAME} 2>/dev/null || true
-            '''
+            sh 'rm -f Dockerfile deploy.yaml 2>/dev/null || true'
         }
     }
 }
