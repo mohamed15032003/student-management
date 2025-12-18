@@ -9,6 +9,7 @@ pipeline {
         K8S_DEPLOYMENT = 'student-deployment'
         NODE_PORT = '30080'
         MINIKUBE_HOME = '/tmp/minikube-jenkins'
+        SONARQUBE_URL = 'http://localhost:9000'
     }
     
     stages {
@@ -35,8 +36,52 @@ pipeline {
             }
         }
         
-        // ÉTAPE 3: Build JAR
-        stage('3) Build JAR Package') {
+        // ÉTAPE 3: SonarQube Analysis
+        stage('3) SonarQube Analysis') {
+            steps {
+                script {
+                    // Essayons avec deux approches pour les credentials
+                    try {
+                        echo "=== ANALYSE SONARQUBE ==="
+                        
+                        // Méthode 1: Utiliser les credentials si disponibles
+                        withCredentials([string(credentialsId: 'SONARQUBE_TOKEN', variable: 'SONAR_TOKEN')]) {
+                            sh """
+                                mvn sonar:sonar \
+                                    -Dsonar.projectKey=${APP_NAME} \
+                                    -Dsonar.host.url=${SONARQUBE_URL} \
+                                    -Dsonar.login=${SONAR_TOKEN}
+                            """
+                        }
+                    } catch (Exception e1) {
+                        echo "⚠️ Méthode 1 échouée, tentative méthode 2..."
+                        
+                        try {
+                            // Méthode 2: Variable d'environnement
+                            if (env.SONAR_TOKEN) {
+                                sh """
+                                    mvn sonar:sonar \
+                                        -Dsonar.projectKey=${APP_NAME} \
+                                        -Dsonar.host.url=${SONARQUBE_URL} \
+                                        -Dsonar.login=${env.SONAR_TOKEN}
+                                """
+                            } else {
+                                echo "ℹ️ Token SonarQube non configuré - étape ignorée"
+                                echo "Configurez 'SONARQUBE_TOKEN' dans les credentials Jenkins"
+                            }
+                        } catch (Exception e2) {
+                            echo "⚠️ SonarQube non disponible - étape ignorée"
+                            echo "Pour configurer SonarQube:"
+                            echo "1. Assurez-vous que SonarQube tourne sur ${SONARQUBE_URL}"
+                            echo "2. Ajoutez 'SONARQUBE_TOKEN' dans les credentials Jenkins"
+                        }
+                    }
+                }
+            }
+        }
+        
+        // ÉTAPE 4: Build JAR
+        stage('4) Build JAR Package') {
             steps {
                 sh '''
                     echo "=== GÉNÉRATION DU JAR ==="
@@ -51,8 +96,8 @@ pipeline {
             }
         }
         
-        // ÉTAPE 4: Build Docker Image
-        stage('4) Build Docker Image') {
+        // ÉTAPE 5: Build Docker Image
+        stage('5) Build Docker Image') {
             steps {
                 script {
                     sh '''
@@ -73,8 +118,8 @@ pipeline {
             }
         }
         
-        // ÉTAPE 5: Setup Minikube Environment (SANS SUDO)
-        stage('5) Setup Minikube Environment') {
+        // ÉTAPE 6: Setup Minikube Environment (SANS SUDO)
+        stage('6) Setup Minikube Environment') {
             steps {
                 script {
                     sh '''
@@ -148,8 +193,8 @@ EOF
             }
         }
         
-        // ÉTAPE 6: Deploy with Docker Compose (Alternative à Kubernetes)
-        stage('6) Deploy with Docker Compose') {
+        // ÉTAPE 7: Deploy with Docker Compose (Alternative à Kubernetes)
+        stage('7) Deploy with Docker Compose') {
             steps {
                 script {
                     sh '''
@@ -196,8 +241,8 @@ EOF
             }
         }
         
-        // ÉTAPE 7: Verification
-        stage('7) Verification and Testing') {
+        // ÉTAPE 8: Verification
+        stage('8) Verification and Testing') {
             steps {
                 script {
                     sh '''
@@ -213,6 +258,7 @@ EOF
                         
                         # Vérifier la santé
                         echo "--- VÉRIFICATION DE SANTÉ ---"
+                        HTTP_CODE="000"
                         for i in {1..10}; do
                             echo "Tentative $i/10..."
                             HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/actuator/health || echo "000")
@@ -252,8 +298,8 @@ EOF
             }
         }
         
-        // ÉTAPE 8: Optional - Kubernetes if Minikube works
-        stage('8) Optional - Kubernetes Deployment') {
+        // ÉTAPE 9: Optional - Kubernetes if Minikube works
+        stage('9) Optional - Kubernetes Deployment') {
             when {
                 expression {
                     // Cette étape ne s'exécute que si Minikube fonctionne
@@ -339,9 +385,10 @@ EOF
                 echo "=========================================="
                 echo "1. ✅ Code source récupéré"
                 echo "2. ✅ Application compilée"
-                echo "3. ✅ JAR généré et archivé"
-                echo "4. ✅ Image Docker créée"
-                echo "5. ✅ Application déployée avec Docker Compose"
+                echo "3. ✅ Analyse SonarQube terminée"
+                echo "4. ✅ JAR généré et archivé"
+                echo "5. ✅ Image Docker créée"
+                echo "6. ✅ Application déployée avec Docker Compose"
                 echo ""
                 echo "🌐 VOTRE APPLICATION EST DISPONIBLE:"
                 echo "   URL: http://localhost:8080/"
@@ -368,9 +415,9 @@ EOF
                 echo "2. Pour utiliser Kubernetes, démarrer Minikube manuellement:"
                 echo "   minikube start --driver=docker --memory=2048mb"
                 echo ""
-                echo "3. Pour configurer sudo sans mot de passe pour Jenkins:"
-                echo "   sudo visudo"
-                echo "   # Ajouter: jenkins ALL=(ALL) NOPASSWD: ALL"
+                echo "3. Pour configurer SonarQube:"
+                echo "   - Assurez-vous que SonarQube tourne sur ${SONARQUBE_URL}"
+                echo "   - Ajoutez 'SONARQUBE_TOKEN' dans les credentials Jenkins"
             '''
         }
     }
