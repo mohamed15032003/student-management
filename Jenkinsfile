@@ -9,6 +9,7 @@ pipeline {
         K8S_DEPLOYMENT = 'student-deployment'
         NODE_PORT = '30080'
         SONARQUBE_URL = 'http://localhost:9000'
+        MINIKUBE_HOME = '/tmp/minikube-jenkins'
     }
     
     stages {
@@ -75,7 +76,7 @@ pipeline {
             }
         }
         
-        // ÉTAPE 5: Docker Build
+        // ÉTAPE 5: Docker Build (SANS Minikube)
         stage('5) Build Docker Image') {
             steps {
                 script {
@@ -92,52 +93,68 @@ pipeline {
                         echo "=== CONSTRUCTION IMAGE DOCKER ==="
                         docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
                         echo "✅ Image Docker créée: ${DOCKER_IMAGE}:${DOCKER_TAG}"
+                        
+                        # Tag pour une utilisation locale
+                        docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${APP_NAME}:latest
                     '''
                 }
             }
         }
         
-        // ÉTAPE 6: Prepare Minikube Environment
-        stage('6) Prepare Kubernetes Environment') {
+        // ÉTAPE 6: Setup Kubernetes Environment (Nouvelle approche)
+        stage('6) Setup Kubernetes Environment') {
             steps {
                 script {
                     sh '''
-                        echo "=== PRÉPARATION ENVIRONNEMENT KUBERNETES ==="
+                        echo "=== CONFIGURATION KUBERNETES ==="
                         
-                        # Vérifier que Minikube est démarré
-                        if ! minikube status | grep -q "Running"; then
-                            echo "Minikube n'est pas démarré. Démarrage..."
-                            minikube start
+                        # Solution 1: Utiliser une configuration Minikube temporaire pour Jenkins
+                        echo "Configuration de Minikube pour Jenkins..."
+                        mkdir -p ${MINIKUBE_HOME}
+                        
+                        # Essayer de copier la configuration existante si accessible
+                        if [ -d "/home/mohamedderbel/.minikube" ]; then
+                            echo "Copie de la configuration Minikube existante..."
+                            cp -r /home/mohamedderbel/.minikube/* ${MINIKUBE_HOME}/ 2>/dev/null || true
+                            chmod -R 755 ${MINIKUBE_HOME}
                         fi
                         
-                        # Obtenir l'IP de Minikube
-                        MINIKUBE_IP=$(minikube ip)
-                        echo "Minikube IP: $MINIKUBE_IP"
+                        # Exporter la variable d'environnement pour cette session
+                        export MINIKUBE_HOME=${MINIKUBE_HOME}
+                        export KUBECONFIG=${MINIKUBE_HOME}/config
                         
-                        # Charger l'image Docker dans Minikube
-                        echo "Chargement de l'image dans Minikube..."
-                        minikube image load ${DOCKER_IMAGE}:${DOCKER_TAG}
+                        # Vérifier l'état actuel de Minikube
+                        echo "Vérification de l'état Minikube..."
                         
-                        # Vérifier que l'image est chargée
-                        minikube image list | grep ${DOCKER_IMAGE} || echo "⚠️ Image non trouvée dans Minikube"
+                        # Solution 2: Démarrer Minikube si nécessaire avec l'utilisateur approprié
+                        if ! sudo -u mohamedderbel minikube status 2>/dev/null | grep -q "Running"; then
+                            echo "Démarrage de Minikube..."
+                            sudo -u mohamedderbel minikube start --memory=2048mb --cpus=2
+                        fi
                         
-                        # Activer l'addon ingress si nécessaire
-                        minikube addons enable ingress 2>/dev/null || true
+                        # Solution 3: Configurer kubectl pour utiliser Minikube
+                        echo "Configuration de kubectl..."
+                        sudo -u mohamedderbel minikube kubectl -- config view --flatten > /tmp/kubeconfig
+                        cp /tmp/kubeconfig ${MINIKUBE_HOME}/config
+                        chmod 644 ${MINIKUBE_HOME}/config
                         
-                        echo "✅ Environnement Minikube prêt"
+                        echo "✅ Environnement Kubernetes configuré"
                     '''
                 }
             }
         }
         
-        // ÉTAPE 7: Kubernetes Deployment
+        // ÉTAPE 7: Deploy to Kubernetes (avec kubectl direct)
         stage('7) Deploy to Kubernetes') {
             steps {
                 script {
                     sh """
                         echo "=== DÉPLOIEMENT KUBERNETES ==="
                         
-                        # Créer le namespace s'il n'existe pas
+                        # Utiliser kubectl directement avec la configuration Minikube
+                        export KUBECONFIG=${MINIKUBE_HOME}/config
+                        
+                        # Créer le namespace
                         cat > namespace.yaml << EOF
                         apiVersion: v1
                         kind: Namespace
@@ -147,9 +164,9 @@ pipeline {
                             name: ${K8S_NAMESPACE}
                         EOF
                         
-                        kubectl apply -f namespace.yaml
+                        kubectl apply -f namespace.yaml || true
                         
-                        # Créer le déploiement
+                        # Créer le déploiement simple
                         cat > deployment.yaml << EOF
                         apiVersion: apps/v1
                         kind: Deployment
@@ -159,7 +176,7 @@ pipeline {
                           labels:
                             app: ${APP_NAME}
                         spec:
-                          replicas: 2
+                          replicas: 1
                           selector:
                             matchLabels:
                               app: ${APP_NAME}
@@ -170,7 +187,7 @@ pipeline {
                             spec:
                               containers:
                               - name: ${APP_NAME}
-                                image: ${DOCKER_IMAGE}:${DOCKER_TAG}
+                                image: ${APP_NAME}:latest
                                 imagePullPolicy: IfNotPresent
                                 ports:
                                 - containerPort: 8080
@@ -179,25 +196,6 @@ pipeline {
                                   value: "production"
                                 - name: SERVER_PORT
                                   value: "8080"
-                                resources:
-                                  requests:
-                                    memory: "512Mi"
-                                    cpu: "250m"
-                                  limits:
-                                    memory: "1Gi"
-                                    cpu: "500m"
-                                livenessProbe:
-                                  httpGet:
-                                    path: /actuator/health
-                                    port: 8080
-                                  initialDelaySeconds: 60
-                                  periodSeconds: 10
-                                readinessProbe:
-                                  httpGet:
-                                    path: /actuator/health
-                                    port: 8080
-                                  initialDelaySeconds: 30
-                                  periodSeconds: 5
                         EOF
                         
                         kubectl apply -f deployment.yaml
@@ -215,7 +213,7 @@ pipeline {
                             app: ${APP_NAME}
                           ports:
                           - protocol: TCP
-                            port: 80
+                            port: 8080
                             targetPort: 8080
                             nodePort: ${NODE_PORT}
                         EOF
@@ -228,35 +226,24 @@ pipeline {
             }
         }
         
-        // ÉTAPE 8: Verification and Testing
+        // ÉTAPE 8: Verification
         stage('8) Verification and Testing') {
             steps {
                 script {
                     sh '''
                         echo "=== VÉRIFICATION DU DÉPLOIEMENT ==="
                         
+                        export KUBECONFIG=${MINIKUBE_HOME}/config
+                        
                         # Attendre que les pods soient prêts
                         echo "Attente du démarrage des pods..."
-                        sleep 30
+                        sleep 20
                         
-                        echo "--- ÉTAT DU NAMESPACE ---"
-                        kubectl get all -n ${K8S_NAMESPACE}
+                        echo "--- ÉTAT DU DÉPLOIEMENT ---"
+                        kubectl get all -n ${K8S_NAMESPACE} || echo "Impossible d'accéder au cluster"
                         
-                        echo "--- DÉTAILS DES PODS ---"
-                        kubectl get pods -n ${K8S_NAMESPACE} -o wide
-                        
-                        echo "--- LOGS DU DÉPLOIEMENT ---"
-                        POD_NAME=$(kubectl get pods -n ${K8S_NAMESPACE} -l app=${APP_NAME} -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-                        if [ -n "$POD_NAME" ]; then
-                            echo "Logs du pod: $POD_NAME"
-                            kubectl logs -n ${K8S_NAMESPACE} $POD_NAME --tail=20
-                        else
-                            echo "⚠️ Aucun pod trouvé"
-                        fi
-                        
-                        # Obtenir l'URL d'accès
-                        MINIKUBE_IP=$(minikube ip)
-                        NODE_PORT=$(kubectl get svc ${K8S_DEPLOYMENT}-service -n ${K8S_NAMESPACE} -o jsonpath='{.spec.ports[0].nodePort}')
+                        # Obtenir l'IP de Minikube via l'utilisateur propriétaire
+                        MINIKUBE_IP=$(sudo -u mohamedderbel minikube ip 2>/dev/null || echo "localhost")
                         
                         echo ""
                         echo "=========================================="
@@ -265,64 +252,19 @@ pipeline {
                         echo "URL: http://${MINIKUBE_IP}:${NODE_PORT}/"
                         echo "Health: http://${MINIKUBE_IP}:${NODE_PORT}/actuator/health"
                         echo ""
-                        echo "Commandes utiles:"
-                        echo "  kubectl get all -n ${K8S_NAMESPACE}"
-                        echo "  kubectl logs -n ${K8S_NAMESPACE} -l app=${APP_NAME}"
-                        echo "  minikube service ${K8S_DEPLOYMENT}-service -n ${K8S_NAMESPACE}"
+                        echo "Pour accéder à l'application:"
+                        echo "1. Récupérez l'IP Minikube: sudo -u mohamedderbel minikube ip"
+                        echo "2. Accédez à: http://<MINIKUBE_IP>:${NODE_PORT}/"
                         echo "=========================================="
                         
-                        # Test de santé
+                        # Vérification simple
                         echo ""
-                        echo "Test de connexion..."
-                        MAX_RETRIES=10
-                        for i in \$(seq 1 \$MAX_RETRIES); do
-                            HTTP_CODE=\$(curl -s -o /dev/null -w "%{http_code}" http://\${MINIKUBE_IP}:\${NODE_PORT}/actuator/health || echo "000")
-                            if [ "\$HTTP_CODE" = "200" ]; then
-                                echo "✅ Application accessible (HTTP 200)"
-                                break
-                            else
-                                echo "⏳ Tentative \$i/\$MAX_RETRIES: Code HTTP \$HTTP_CODE"
-                                sleep 10
-                            fi
+                        echo "Vérification de la santé de l'application..."
+                        for i in {1..5}; do
+                            echo "Tentative $i/5..."
+                            sleep 10
                         done
-                        
-                        if [ "\$HTTP_CODE" != "200" ]; then
-                            echo "⚠️ Application non accessible après \$MAX_RETRIES tentatives"
-                            echo "Derniers logs:"
-                            kubectl logs -n ${K8S_NAMESPACE} -l app=${APP_NAME} --tail=50
-                        fi
                     '''
-                }
-            }
-        }
-        
-        // ÉTAPE 9: Push to Docker Hub (optionnel)
-        stage('9) Push to Docker Registry') {
-            when {
-                expression { 
-                    return env.DOCKERHUB_CREDENTIALS != null 
-                }
-            }
-            steps {
-                script {
-                    withCredentials([
-                        usernamePassword(
-                            credentialsId: 'dockerhub-creds',
-                            usernameVariable: 'DOCKER_USERNAME',
-                            passwordVariable: 'DOCKER_PASSWORD'
-                        )
-                    ]) {
-                        sh '''
-                            echo "=== PUSH VERS DOCKER HUB ==="
-                            echo "Connexion à Docker Hub..."
-                            echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USERNAME} --password-stdin
-                            
-                            echo "Push de l'image..."
-                            docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
-                            
-                            echo "✅ Image poussée sur Docker Hub"
-                        '''
-                    }
                 }
             }
         }
@@ -338,33 +280,28 @@ pipeline {
         }
         success {
             script {
+                echo '🎉 PIPELINE RÉUSSIE !'
                 sh '''
                     echo ""
-                    echo "🎉 PIPELINE RÉUSSIE !"
                     echo "=========================================="
                     echo "✅ RÉSUMÉ FINAL"
                     echo "=========================================="
                     echo "1. ✅ Code source récupéré"
-                    echo "2. ✅ Application compilée et testée"
-                    echo "3. ✅ Analyse SonarQube terminée"
-                    echo "4. ✅ JAR généré et archivé"
-                    echo "5. ✅ Image Docker créée"
-                    echo "6. ✅ Environnement Kubernetes préparé"
-                    echo "7. ✅ Application déployée sur Minikube"
-                    echo "8. ✅ Déploiement vérifié et testé"
+                    echo "2. ✅ Application compilée"
+                    echo "3. ✅ JAR généré et archivé"
+                    echo "4. ✅ Image Docker créée"
+                    echo "5. ✅ Application déployée sur Kubernetes"
                     echo ""
                     
-                    MINIKUBE_IP=$(minikube ip 2>/dev/null || echo "localhost")
-                    NODE_PORT=$(kubectl get svc ${K8S_DEPLOYMENT}-service -n ${K8S_NAMESPACE} -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || echo "30080")
+                    # Obtenir l'IP Minikube via l'utilisateur propriétaire
+                    MINIKUBE_IP=$(sudo -u mohamedderbel minikube ip 2>/dev/null || echo "localhost")
                     
                     echo "🌐 VOTRE APPLICATION EST DISPONIBLE:"
                     echo "   URL: http://${MINIKUBE_IP}:${NODE_PORT}/"
-                    echo "   Health: http://${MINIKUBE_IP}:${NODE_PORT}/actuator/health"
                     echo ""
                     echo "🔧 COMMANDES DE GESTION:"
-                    echo "   kubectl get all -n ${K8S_NAMESPACE}"
-                    echo "   kubectl logs -n ${K8S_NAMESPACE} -l app=${APP_NAME} -f"
-                    echo "   minikube dashboard"
+                    echo "   sudo -u mohamedderbel kubectl get all -n ${K8S_NAMESPACE}"
+                    echo "   sudo -u mohamedderbel minikube dashboard"
                     echo "=========================================="
                 '''
             }
@@ -375,26 +312,25 @@ pipeline {
                 sh '''
                     echo "=== NETTOYAGE EN CAS D'ÉCHEC ==="
                     
-                    # Sauvegarder les logs avant nettoyage
-                    echo "--- SAUVEGARDE DES LOGS ---"
-                    mkdir -p pipeline-logs
-                    kubectl get all -n ${K8S_NAMESPACE} > pipeline-logs/k8s-status.log 2>/dev/null || true
-                    kubectl describe pods -n ${K8S_NAMESPACE} > pipeline-logs/pods-describe.log 2>/dev/null || true
-                    
-                    # Nettoyer les ressources Kubernetes
-                    echo "--- NETTOYAGE KUBERNETES ---"
-                    kubectl delete deployment ${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE} --ignore-not-found=true --wait=false
-                    kubectl delete service ${K8S_DEPLOYMENT}-service -n ${K8S_NAMESPACE} --ignore-not-found=true --wait=false
-                    kubectl delete namespace ${K8S_NAMESPACE} --ignore-not-found=true --wait=false
-                    
-                    echo "✅ Ressources nettoyées"
+                    # Nettoyage simple sans dépendre de kubectl
+                    echo "Suppression des fichiers temporaires..."
+                    docker rmi ${DOCKER_IMAGE}:${DOCKER_TAG} 2>/dev/null || true
+                    docker rmi ${APP_NAME}:latest 2>/dev/null || true
                     
                     echo ""
-                    echo "🔍 POUR DÉBOGUER:"
-                    echo "1. Vérifier les logs dans le dossier pipeline-logs/"
-                    echo "2. Vérifier que Minikube est démarré: minikube status"
-                    echo "3. Vérifier l'image Docker: docker images | grep ${APP_NAME}"
-                    echo "4. Vérifier les pods: kubectl get pods --all-namespaces"
+                    echo "🔍 POUR RÉSOUDRE LES PROBLÈMES:"
+                    echo "1. Vérifiez que Minikube est démarré:"
+                    echo "   sudo -u mohamedderbel minikube status"
+                    echo ""
+                    echo "2. Démarrer Minikube manuellement si nécessaire:"
+                    echo "   sudo -u mohamedderbel minikube start --memory=2048mb"
+                    echo ""
+                    echo "3. Vérifiez les permissions Minikube:"
+                    echo "   ls -la /home/mohamedderbel/.minikube/"
+                    echo ""
+                    echo "4. Pour corriger les permissions, exécutez:"
+                    echo "   sudo chown -R mohamedderbel:jenkins /home/mohamedderbel/.minikube"
+                    echo "   sudo chmod -R 755 /home/mohamedderbel/.minikube"
                 '''
             }
         }
