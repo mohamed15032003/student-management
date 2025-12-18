@@ -2,132 +2,158 @@ pipeline {
     agent any
     
     environment {
-        // Variables d'environnement
+        // Variables Docker
         DOCKER_IMAGE = 'mohamedderbel15032003/student-management-app'
         DOCKER_TAG = 'latest'
+        
+        // Variables Kubernetes
+        K8S_NAMESPACE = 'student-management'
+        K8S_DEPLOYMENT = 'student-management-app'
+        MINIKUBE_NODE_IP = '192.168.49.2'  // IP de votre Minikube
+        NODE_PORT = '30080'
     }
     
     stages {
-        // Étape 1: Récupération du code
-        stage('1) Git Clone') {
-            steps {
-                git(
-                    url: 'https://github.com/mohamed15032003/student-management.git',
-                    branch: 'main',
-                    credentialsId: 'github-creds'  // Utilisation de vos identifiants GitHub
-                )
-                sh 'echo "Code source récupéré avec succès !"'
-            }
-        }
+        // ... vos étapes existantes (Git, Maven, SonarQube, Docker) ...
         
-        // Étape 2: Compilation avec Maven
-        stage('2) Build Maven') {
-            steps {
-                sh 'mvn clean compile'
-                sh 'echo "Compilation Maven réussie !"'
+        // Étape 6: Déploiement Kubernetes sur Minikube
+        stage('6) Deploy to Minikube') {
+            environment {
+                // Utilisation de vos identifiants Minikube
+                KUBECONFIG = credentials('minikube-kubeconfig')
             }
-        }
-        
-        // Étape 3: Génération du JAR
-        stage('3) Build JAR') {
             steps {
-                sh 'mvn package -DskipTests'
-                sh '''
-                    echo "=== ARTEFACTS ==="
-                    ls -la target/*.jar
-                    echo "=== TAILLE ==="
-                    du -h target/*.jar
-                '''
-                archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
-                sh 'echo "JAR archivé dans Jenkins"'
-            }
-        }
-        
-        // Étape 4: Analyse SonarQube - CORRIGÉE avec le bon ID
-        stage('4) SonarQube Analysis') {
-            steps {
-                withCredentials([
-                    string(credentialsId: 'SONARQUBE_TOKEN', variable: 'SONAR_TOKEN')
-                ]) {
+                script {
+                    echo "🚀 Déploiement sur Minikube..."
+                    
+                    // 1. Vérifier l'accès à Minikube
                     sh '''
-                        mvn sonar:sonar \
-                        -Dsonar.projectKey=student-management \
-                        -Dsonar.host.url=http://54.37.78.131:9000 \
-                        -Dsonar.login=${SONAR_TOKEN}
+                        echo "=== CONNEXION MINIKUBE ==="
+                        kubectl config current-context
+                        kubectl get nodes
+                        echo "Minikube IP: ${MINIKUBE_NODE_IP}"
+                    '''
+                    
+                    // 2. Créer le namespace
+                    sh """
+                        kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f - || true
+                    """
+                    
+                    // 3. Créer le déploiement
+                    sh """
+                        cat > deployment.yaml << EOF
+                        apiVersion: apps/v1
+                        kind: Deployment
+                        metadata:
+                          name: ${K8S_DEPLOYMENT}
+                          namespace: ${K8S_NAMESPACE}
+                        spec:
+                          replicas: 2
+                          selector:
+                            matchLabels:
+                              app: student-management
+                          template:
+                            metadata:
+                              labels:
+                                app: student-management
+                            spec:
+                              containers:
+                              - name: student-management
+                                image: ${DOCKER_IMAGE}:${DOCKER_TAG}
+                                ports:
+                                - containerPort: 8080
+                                resources:
+                                  requests:
+                                    memory: "512Mi"
+                                    cpu: "250m"
+                        EOF
+                        
+                        kubectl apply -f deployment.yaml -n ${K8S_NAMESPACE}
+                    """
+                    
+                    // 4. Créer le service NodePort
+                    sh """
+                        cat > service.yaml << EOF
+                        apiVersion: v1
+                        kind: Service
+                        metadata:
+                          name: ${K8S_DEPLOYMENT}-service
+                          namespace: ${K8S_NAMESPACE}
+                        spec:
+                          type: NodePort
+                          selector:
+                            app: student-management
+                          ports:
+                          - port: 8080
+                            targetPort: 8080
+                            nodePort: ${NODE_PORT}
+                        EOF
+                        
+                        kubectl apply -f service.yaml -n ${K8S_NAMESPACE}
+                    '''
+                    
+                    // 5. Vérifier le déploiement
+                    sh '''
+                        echo "=== VÉRIFICATION ==="
+                        kubectl get pods -n ${K8S_NAMESPACE}
+                        kubectl get svc -n ${K8S_NAMESPACE}
+                        
+                        echo "🌐 VOTRE APPLICATION EST DISPONIBLE SUR :"
+                        echo "http://${MINIKUBE_NODE_IP}:${NODE_PORT}/"
+                        
+                        # Attendre que les pods soient prêts
+                        sleep 10
+                        kubectl wait --for=condition=ready pod -l app=student-management -n ${K8S_NAMESPACE} --timeout=120s
                     '''
                 }
             }
         }
         
-        // Étape 5: Construction et push Docker
-        stage('5) Docker Build & Push') {
-            environment {
-                // Utilisation de vos identifiants Docker Hub
-                DOCKER_CREDENTIALS_ID = 'docker-hub-credentials'
-            }
+        // Étape 7: Test de l'application déployée
+        stage('7) Test Application') {
             steps {
                 script {
-                    // Construction de l'image Docker
-                    sh """
-                        docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
-                        docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:${BUILD_NUMBER}
-                    """
-                    
-                    // Connexion à Docker Hub
-                    withCredentials([
-                        usernamePassword(
-                            credentialsId: DOCKER_CREDENTIALS_ID,
-                            usernameVariable: 'DOCKER_USERNAME',
-                            passwordVariable: 'DOCKER_PASSWORD'
-                        )
-                    ]) {
-                        sh '''
-                            echo "Connexion à Docker Hub..."
-                            echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USERNAME} --password-stdin
-                        '''
-                    }
-                    
-                    // Push des images
-                    sh """
-                        docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
-                        docker push ${DOCKER_IMAGE}:${BUILD_NUMBER}
-                    """
-                    
-                    sh 'echo "Images Docker poussées avec succès !"'
+                    sh '''
+                        echo "🧪 Test de l'application déployée..."
+                        sleep 30  # Laisser le temps à l'app de démarrer
+                        
+                        # Tester l'accès
+                        curl -s -o /dev/null -w "Code HTTP: %{http_code}\n" http://${MINIKUBE_NODE_IP}:${NODE_PORT}/actuator/health || echo "Application en cours de démarrage"
+                        
+                        echo "✅ Déploiement Minikube terminé !"
+                        echo ""
+                        echo "📋 RÉSUMÉ :"
+                        echo "Application: http://${MINIKUBE_NODE_IP}:${NODE_PORT}/"
+                        echo "Pour voir les logs: kubectl logs -f deployment/${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE}"
+                        echo "Pour supprimer: kubectl delete namespace ${K8S_NAMESPACE}"
+                    '''
                 }
-            }
-        }
-        
-        // Étape optionnelle: Déploiement
-        stage('6) Déploiement') {
-            steps {
-                sh 'echo "Étape de déploiement - À configurer selon votre environnement"'
-                // Exemple de déploiement:
-                // sh 'kubectl apply -f k8s/deployment.yaml'
-                // sh 'kubectl rollout status deployment/student-management'
             }
         }
     }
     
     post {
         success {
-            echo '✅ Pipeline réussie !'
-            // Nettoyage des images locales pour économiser l'espace
+            echo '🎉 Pipeline réussie avec déploiement Minikube !'
             sh '''
-                docker rmi ${DOCKER_IMAGE}:${DOCKER_TAG} || true
-                docker rmi ${DOCKER_IMAGE}:${BUILD_NUMBER} || true
+                echo "=========================================="
+                echo "✅ DÉPLOIEMENT RÉUSSI"
+                echo "🌐 URL: http://192.168.49.2:30080/"
+                echo "🔧 Commandes utiles:"
+                echo "   kubectl get pods -n student-management"
+                echo "   kubectl logs -f deployment/student-management-app -n student-management"
+                echo "   kubectl delete namespace student-management"
+                echo "=========================================="
             '''
         }
         failure {
             echo '❌ Pipeline échouée.'
-            // Actions en cas d'échec (notification, logs, etc.)
-        }
-        always {
-            echo '🔧 Nettoyage...'
-            // Nettoyage des conteneurs arrêtés
-            sh 'docker container prune -f || true'
-            // Nettoyage des images sans tag
-            sh 'docker image prune -f || true'
+            // Nettoyage en cas d'échec
+            sh '''
+                echo "Nettoyage des ressources Kubernetes..."
+                kubectl delete deployment ${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE} --ignore-not-found=true || true
+                kubectl delete service ${K8S_DEPLOYMENT}-service -n ${K8S_NAMESPACE} --ignore-not-found=true || true
+            '''
         }
     }
 }
