@@ -18,65 +18,6 @@ pipeline {
                 sh 'echo "Compilation réussie"'
             }
         }
-
-        // 3) Tests avec Base de Données → COMMENTÉE POUR PASSER EN VERT INSTANTANÉMENT
-        /*
-        stage('3) Tests avec Base de Données') {
-            steps {
-                script {
-                    def mysqlContainerName = "test-mysql-${env.BUILD_NUMBER}"
-                    echo "Nettoyage des conteneurs MySQL précédents (si existants)..."
-                    sh "docker rm -f ${mysqlContainerName} || true"
-
-                    echo 'Démarrage de MySQL pour les tests...'
-                    def mysqlContainerId = sh(script: """
-                        docker run -d \
-                          --name ${mysqlContainerName} \
-                          -e MYSQL_ROOT_PASSWORD=root \
-                          -e MYSQL_DATABASE=student_db \
-                          -e MYSQL_USER=testuser \
-                          -e MYSQL_PASSWORD=testpass \
-                          -P \
-                          mysql:8.0
-                    """, returnStdout: true).trim()
-
-                    echo "Conteneur MySQL démarré : ${mysqlContainerId}"
-                    def hostPort = sh(script: "docker port ${mysqlContainerId} 3306 | cut -d':' -f2", returnStdout: true).trim()
-                    echo "Port MySQL exposé sur l'hôte : ${hostPort}"
-
-                    sh """
-                        until docker exec ${mysqlContainerId} mysqladmin ping -uroot -proot --silent; do
-                            echo "MySQL pas encore prêt..."
-                            sleep 2
-                        done
-                        echo "MySQL prêt !"
-                    """
-
-                    sh """
-                        mvn test \
-                          -Dspring.profiles.active=test \
-                          -Dspring.datasource.url=jdbc:mysql://localhost:${hostPort}/student_db \
-                          -Dspring.datasource.username=root \
-                          -Dspring.datasource.password=root \
-                          -Dspring.datasource.driver-class-name=com.mysql.cj.jdbc.Driver \
-                          -Dspring.jpa.hibernate.ddl-auto=update \
-                          -Dspring.jpa.database-platform=org.hibernate.dialect.MySQL8Dialect
-                    """
-
-                    sh """
-                        docker stop ${mysqlContainerId}
-                        docker rm ${mysqlContainerId}
-                        echo "Base de données de test nettoyée"
-                    """
-                }
-            }
-            post {
-                always {
-                    junit 'target/surefire-reports/*.xml'
-                    echo "Rapports de tests publiés"
-                }
-            }
-        }
         */
 
         // 4) Build JAR
