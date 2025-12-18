@@ -4,16 +4,12 @@ pipeline {
     environment {
         APP_NAME = 'student-management'
         DOCKER_IMAGE = 'student-management-app'
-        DOCKER_TAG = "latest-${BUILD_NUMBER}"
-        K8S_NAMESPACE = 'student-namespace'
-        K8S_DEPLOYMENT = 'student-deployment'
-        NODE_PORT = '30080'
-        MINIKUBE_HOME = '/tmp/minikube-jenkins'
+        DOCKER_TAG = "${BUILD_NUMBER}"
         SONARQUBE_URL = 'http://localhost:9000'
     }
     
     stages {
-        // ÉTAPE 1: Git Clone
+        // ÉTAPE 1: Récupération du code
         stage('1) Git Clone') {
             steps {
                 git(
@@ -25,7 +21,7 @@ pipeline {
             }
         }
         
-        // ÉTAPE 2: Build Application
+        // ÉTAPE 2: Compilation
         stage('2) Build Application') {
             steps {
                 sh '''
@@ -36,332 +32,129 @@ pipeline {
             }
         }
         
-        // ÉTAPE 3: SonarQube Analysis
+        // ÉTAPE 3: Analyse SonarQube
         stage('3) SonarQube Analysis') {
             steps {
                 script {
-                    // Essayons avec deux approches pour les credentials
+                    echo "=== ANALYSE SONARQUBE ==="
+                    
+                    // Test de connexion à SonarQube
                     try {
-                        echo "=== ANALYSE SONARQUBE ==="
-                        
-                        // Méthode 1: Utiliser les credentials si disponibles
-                        withCredentials([string(credentialsId: 'SONARQUBE_TOKEN', variable: 'SONAR_TOKEN')]) {
-                            sh """
-                                mvn sonar:sonar \
-                                    -Dsonar.projectKey=${APP_NAME} \
-                                    -Dsonar.host.url=${SONARQUBE_URL} \
-                                    -Dsonar.login=${SONAR_TOKEN}
-                            """
-                        }
-                    } catch (Exception e1) {
-                        echo "⚠️ Méthode 1 échouée, tentative méthode 2..."
-                        
-                        try {
-                            // Méthode 2: Variable d'environnement
-                            if (env.SONAR_TOKEN) {
-                                sh """
-                                    mvn sonar:sonar \
-                                        -Dsonar.projectKey=${APP_NAME} \
-                                        -Dsonar.host.url=${SONARQUBE_URL} \
-                                        -Dsonar.login=${env.SONAR_TOKEN}
-                                """
-                            } else {
-                                echo "ℹ️ Token SonarQube non configuré - étape ignorée"
-                                echo "Configurez 'SONARQUBE_TOKEN' dans les credentials Jenkins"
-                            }
-                        } catch (Exception e2) {
-                            echo "⚠️ SonarQube non disponible - étape ignorée"
-                            echo "Pour configurer SonarQube:"
-                            echo "1. Assurez-vous que SonarQube tourne sur ${SONARQUBE_URL}"
-                            echo "2. Ajoutez 'SONARQUBE_TOKEN' dans les credentials Jenkins"
-                        }
+                        sh 'timeout 10 curl -s -f http://localhost:9000 > /dev/null'
+                        echo "SonarQube accessible"
+                    } catch (Exception e) {
+                        echo "⚠️ SonarQube non accessible - étape ignorée"
+                        return
                     }
+                    
+                    // Exécution de l'analyse
+                    withCredentials([string(credentialsId: 'SONARQUBE_TOKEN', variable: 'SONAR_TOKEN')]) {
+                        sh """
+                            mvn sonar:sonar \
+                                -Dsonar.projectKey=${APP_NAME} \
+                                -Dsonar.host.url=${SONARQUBE_URL} \
+                                -Dsonar.login=${SONAR_TOKEN}
+                        """
+                    }
+                    echo "✅ Analyse SonarQube terminée"
                 }
             }
         }
         
-        // ÉTAPE 4: Build JAR
-        stage('4) Build JAR Package') {
+        // ÉTAPE 4: Génération du JAR
+        stage('4) Build JAR') {
             steps {
                 sh '''
                     echo "=== GÉNÉRATION DU JAR ==="
                     mvn clean package -DskipTests
-                    echo "=== ARTÉFACTS GÉNÉRÉS ==="
+                    echo "=== FICHIER GÉNÉRÉ ==="
                     ls -lh target/*.jar
-                    echo "Taille du JAR:"
-                    du -h target/*.jar | head -1
+                    echo "Taille: $(du -h target/*.jar | cut -f1)"
                 '''
                 archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
-                sh 'echo "✅ JAR archivé dans Jenkins"'
+                sh 'echo "✅ JAR archivé"'
             }
         }
         
-        // ÉTAPE 5: Build Docker Image
-        stage('5) Build Docker Image') {
+        // ÉTAPE 5: Construction de l'image Docker
+        stage('5) Docker Build') {
             steps {
                 script {
                     sh '''
-                        echo "=== CRÉATION DOCKERFILE ==="
-                        cat > Dockerfile << EOF
-                        FROM openjdk:17-jdk-slim
-                        WORKDIR /app
-                        COPY target/student-management-0.0.1-SNAPSHOT.jar app.jar
-                        EXPOSE 8080
-                        ENTRYPOINT ["java", "-jar", "/app.jar"]
-                        EOF
+                        echo "=== CONSTRUCTION DOCKER ==="
                         
-                        echo "=== CONSTRUCTION IMAGE DOCKER ==="
+                        # Créer Dockerfile
+                        cat > Dockerfile << 'EOF'
+FROM openjdk:17-jdk-slim
+WORKDIR /app
+COPY target/student-management-0.0.1-SNAPSHOT.jar app.jar
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", "/app.jar"]
+EOF
+                        
+                        # Construire l'image
                         docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} .
-                        echo "✅ Image Docker créée: ${DOCKER_IMAGE}:${DOCKER_TAG}"
+                        docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest
+                        
+                        echo "✅ Images créées:"
+                        docker images | grep ${DOCKER_IMAGE}
                     '''
                 }
             }
         }
         
-        // ÉTAPE 6: Setup Minikube Environment (SANS SUDO)
-        stage('6) Setup Minikube Environment') {
+        // ÉTAPE 6: Déploiement Docker
+        stage('6) Docker Deploy') {
             steps {
                 script {
                     sh '''
-                        echo "=== CONFIGURATION MINIKUBE ==="
+                        echo "=== DÉPLOIEMENT ==="
                         
-                        # Créer un environnement Minikube temporaire pour Jenkins
-                        mkdir -p ${MINIKUBE_HOME}
+                        # Arrêter l'ancien conteneur
+                        docker stop ${APP_NAME} 2>/dev/null || true
+                        docker rm ${APP_NAME} 2>/dev/null || true
                         
-                        # Vérifier si Minikube est accessible
-                        if [ -x "$(command -v minikube)" ]; then
-                            echo "Minikube est installé"
-                            
-                            # Essayer de démarrer Minikube sans sudo
-                            echo "Tentative de démarrage de Minikube..."
-                            
-                            # Option A: Utiliser le driver Docker (recommandé)
-                            MINIKUBE_START_CMD="minikube start --driver=docker --memory=2048mb --cpus=2"
-                            
-                            # Essayer différentes approches
-                            echo "Approche 1: Démarrer Minikube normalement..."
-                            if ${MINIKUBE_START_CMD} 2>/dev/null; then
-                                echo "✅ Minikube démarré avec succès"
-                            else
-                                echo "⚠️ Impossible de démarrer Minikube normalement"
-                                
-                                # Option B: Vérifier si Minikube tourne déjà
-                                if minikube status 2>/dev/null | grep -q "Running"; then
-                                    echo "✅ Minikube est déjà en cours d'exécution"
-                                else
-                                    echo "⚠️ Minikube ne fonctionne pas avec l'utilisateur Jenkins"
-                                    echo "Solution: Démarrer Minikube manuellement avant d'exécuter le pipeline"
-                                fi
-                            fi
-                        else
-                            echo "⚠️ Minikube n'est pas installé ou non accessible"
-                        fi
+                        # Démarrer le nouveau conteneur
+                        docker run -d \
+                            --name ${APP_NAME} \
+                            -p 8080:8080 \
+                            --restart unless-stopped \
+                            ${DOCKER_IMAGE}:latest
                         
-                        # Configurer kubectl pour utiliser Minikube
-                        echo "Configuration de kubectl..."
-                        if [ -x "$(command -v kubectl)" ]; then
-                            # Essayer de récupérer la configuration
-                            if minikube kubectl -- config view 2>/dev/null; then
-                                minikube kubectl -- config view --flatten > ${MINIKUBE_HOME}/config
-                                echo "✅ Configuration kubectl générée"
-                            else
-                                # Créer une configuration de secours
-                                cat > ${MINIKUBE_HOME}/config << EOF
-apiVersion: v1
-kind: Config
-clusters:
-- cluster:
-    server: https://localhost:8443
-    insecure-skip-tls-verify: true
-  name: minikube
-contexts:
-- context:
-    cluster: minikube
-    user: minikube
-  name: minikube
-current-context: minikube
-users:
-- name: minikube
-EOF
-                                echo "⚠️ Configuration kubectl par défaut créée"
-                            fi
-                        fi
-                        
-                        echo "Environnement préparé"
+                        echo "✅ Application déployée"
                     '''
                 }
             }
         }
         
-        // ÉTAPE 7: Deploy with Docker Compose (Alternative à Kubernetes)
-        stage('7) Deploy with Docker Compose') {
-            steps {
-                script {
-                    sh '''
-                        echo "=== DÉPLOIEMENT AVEC DOCKER COMPOSE ==="
-                        
-                        # Créer un docker-compose.yml
-                        cat > docker-compose.yml << EOF
-version: '3.8'
-services:
-  ${APP_NAME}:
-    image: ${DOCKER_IMAGE}:${DOCKER_TAG}
-    container_name: ${APP_NAME}
-    ports:
-      - "8080:8080"
-    environment:
-      - SPRING_PROFILES_ACTIVE=production
-      - SERVER_PORT=8080
-    restart: unless-stopped
-    networks:
-      - student-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
-networks:
-  student-network:
-    driver: bridge
-EOF
-                        
-                        # Arrêter et supprimer les anciens conteneurs
-                        echo "Nettoyage des anciens conteneurs..."
-                        docker-compose down 2>/dev/null || true
-                        
-                        # Démarrer l'application
-                        echo "Démarrage de l'application..."
-                        docker-compose up -d
-                        
-                        echo "✅ Application déployée avec Docker Compose"
-                    '''
-                }
-            }
-        }
-        
-        // ÉTAPE 8: Verification
-        stage('8) Verification and Testing') {
+        // ÉTAPE 7: Vérification
+        stage('7) Verification') {
             steps {
                 script {
                     sh '''
                         echo "=== VÉRIFICATION ==="
                         
-                        # Attendre le démarrage
-                        echo "Attente du démarrage de l'application..."
-                        sleep 30
-                        
-                        # Vérifier les conteneurs
-                        echo "--- ÉTAT DES CONTENEURS ---"
+                        # Vérifier le conteneur
+                        echo "--- CONTENEUR DOCKER ---"
                         docker ps --filter "name=${APP_NAME}"
                         
-                        # Vérifier la santé
-                        echo "--- VÉRIFICATION DE SANTÉ ---"
-                        HTTP_CODE="000"
-                        for i in {1..10}; do
-                            echo "Tentative $i/10..."
-                            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/actuator/health || echo "000")
-                            
-                            if [ "$HTTP_CODE" = "200" ]; then
-                                echo "✅ Application accessible (HTTP 200)"
-                                
-                                # Afficher les logs de démarrage
-                                echo "--- DERNIERS LOGS ---"
-                                docker logs ${APP_NAME} --tail=20
+                        # Tester l'application
+                        echo "--- TEST D'ACCÈS ---"
+                        for i in {1..6}; do
+                            echo "Tentative $i/6..."
+                            if curl -s -f http://localhost:8080/actuator/health > /dev/null 2>&1; then
+                                echo "✅ Application accessible"
+                                echo "URL: http://localhost:8080"
+                                echo "Health: http://localhost:8080/actuator/health"
                                 break
                             else
-                                echo "⏳ Application en cours de démarrage (Code: $HTTP_CODE)"
                                 sleep 10
                             fi
                         done
                         
-                        if [ "$HTTP_CODE" != "200" ]; then
-                            echo "⚠️ Application non accessible après 10 tentatives"
-                            echo "Logs complets:"
-                            docker logs ${APP_NAME}
-                        fi
-                        
-                        echo ""
-                        echo "=========================================="
-                        echo "🌐 APPLICATION DÉPLOYÉE !"
-                        echo "=========================================="
-                        echo "URL: http://localhost:8080/"
-                        echo "Health: http://localhost:8080/actuator/health"
-                        echo ""
-                        echo "🔧 COMMANDES:"
-                        echo "   docker logs ${APP_NAME} -f"
-                        echo "   docker-compose down"
-                        echo "=========================================="
-                    '''
-                }
-            }
-        }
-        
-        // ÉTAPE 9: Optional - Kubernetes if Minikube works
-        stage('9) Optional - Kubernetes Deployment') {
-            when {
-                expression {
-                    // Cette étape ne s'exécute que si Minikube fonctionne
-                    return fileExists("${env.MINIKUBE_HOME}/config")
-                }
-            }
-            steps {
-                script {
-                    sh '''
-                        echo "=== DÉPLOIEMENT KUBERNETES (OPTIONNEL) ==="
-                        
-                        export KUBECONFIG=${MINIKUBE_HOME}/config
-                        
-                        # Créer namespace
-                        kubectl create namespace ${K8S_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
-                        
-                        # Créer déploiement
-                        cat > k8s-deployment.yaml << EOF
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: ${K8S_DEPLOYMENT}
-  namespace: ${K8S_NAMESPACE}
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: ${APP_NAME}
-  template:
-    metadata:
-      labels:
-        app: ${APP_NAME}
-    spec:
-      containers:
-      - name: ${APP_NAME}
-        image: ${DOCKER_IMAGE}:${DOCKER_TAG}
-        ports:
-        - containerPort: 8080
-EOF
-                        
-                        kubectl apply -f k8s-deployment.yaml
-                        
-                        # Créer service
-                        cat > k8s-service.yaml << EOF
-apiVersion: v1
-kind: Service
-metadata:
-  name: ${K8S_DEPLOYMENT}-service
-  namespace: ${K8S_NAMESPACE}
-spec:
-  type: NodePort
-  selector:
-    app: ${APP_NAME}
-  ports:
-  - port: 8080
-    targetPort: 8080
-    nodePort: ${NODE_PORT}
-EOF
-                        
-                        kubectl apply -f k8s-service.yaml
-                        
-                        echo "✅ Déploiement Kubernetes terminé"
+                        # Afficher les logs
+                        echo "--- LOGS RÉCENTS ---"
+                        docker logs ${APP_NAME} --tail=10
                     '''
                 }
             }
@@ -372,52 +165,42 @@ EOF
         always {
             sh '''
                 echo "=== NETTOYAGE ==="
-                rm -f Dockerfile docker-compose.yml k8s-deployment.yaml k8s-service.yaml 2>/dev/null || true
-                echo "Fichiers temporaires nettoyés"
+                rm -f Dockerfile 2>/dev/null || true
+                echo "Fichiers temporaires supprimés"
             '''
         }
         success {
-            echo '🎉 PIPELINE RÉUSSIE !'
+            echo '🎉 DÉPLOIEMENT RÉUSSI !'
             sh '''
                 echo ""
-                echo "=========================================="
-                echo "✅ RÉSUMÉ FINAL"
-                echo "=========================================="
-                echo "1. ✅ Code source récupéré"
-                echo "2. ✅ Application compilée"
-                echo "3. ✅ Analyse SonarQube terminée"
-                echo "4. ✅ JAR généré et archivé"
-                echo "5. ✅ Image Docker créée"
-                echo "6. ✅ Application déployée avec Docker Compose"
+                echo "========================================"
+                echo "✅ APPLICATION DÉPLOYÉE"
+                echo "========================================"
+                echo "Application: ${APP_NAME}"
+                echo "Version: ${DOCKER_TAG}"
+                echo "URL: http://localhost:8080"
+                echo "Health: http://localhost:8080/actuator/health"
                 echo ""
-                echo "🌐 VOTRE APPLICATION EST DISPONIBLE:"
-                echo "   URL: http://localhost:8080/"
-                echo "   Health: http://localhost:8080/actuator/health"
-                echo ""
-                echo "🔧 COMMANDES DE GESTION:"
-                echo "   docker logs student-management -f"
-                echo "   docker-compose down"
-                echo "=========================================="
+                echo "🔧 COMMANDES UTILES:"
+                echo "   Voir logs: docker logs ${APP_NAME} -f"
+                echo "   Arrêter:   docker stop ${APP_NAME}"
+                echo "   Redémarrer: docker restart ${APP_NAME}"
+                echo "========================================"
             '''
         }
         failure {
-            echo '❌ Pipeline échouée'
+            echo '❌ DÉPLOIEMENT ÉCHOUÉ'
             sh '''
-                echo "=== NETTOYAGE EN CAS D'ÉCHEC ==="
-                docker-compose down 2>/dev/null || true
-                docker rm -f ${APP_NAME} 2>/dev/null || true
+                echo "=== NETTOYAGE EN CAS D'ERREUR ==="
+                docker stop ${APP_NAME} 2>/dev/null || true
+                docker rm ${APP_NAME} 2>/dev/null || true
                 
                 echo ""
-                echo "🔍 POUR RÉSOUDRE LES PROBLÈMES:"
-                echo "1. Vérifiez que Docker fonctionne:"
-                echo "   docker ps"
-                echo ""
-                echo "2. Pour utiliser Kubernetes, démarrer Minikube manuellement:"
-                echo "   minikube start --driver=docker --memory=2048mb"
-                echo ""
-                echo "3. Pour configurer SonarQube:"
-                echo "   - Assurez-vous que SonarQube tourne sur ${SONARQUBE_URL}"
-                echo "   - Ajoutez 'SONARQUBE_TOKEN' dans les credentials Jenkins"
+                echo "🔍 POUR DÉBOGUER:"
+                echo "1. Vérifier Docker: docker ps"
+                echo "2. Vérifier le port: netstat -tlnp | grep 8080"
+                echo "3. Vérifier les logs: docker logs ${APP_NAME}"
+                echo "4. Tester manuellement: curl http://localhost:8080/actuator/health"
             '''
         }
     }
